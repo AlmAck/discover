@@ -22,6 +22,7 @@
 #ifndef AKABEIUPDATER_H
 #define AKABEIUPDATER_H
 
+// DiscoverCommon includes
 #include <resources/AbstractBackendUpdater.h>
 #include <akabeiclienttransactionhandler.h>
 
@@ -29,7 +30,7 @@ class AkabeiBackend;
 
 namespace Akabei {
     class Package;
-};
+}
 
 class AkabeiUpdater : public AbstractBackendUpdater
 {
@@ -39,20 +40,20 @@ public:
     ~AkabeiUpdater();
     
     virtual QList< QAction* > messageActions() const;
-    virtual quint64 downloadSpeed() const;
-    virtual QString statusDetail() const;
-    virtual QString statusMessage() const;
-    virtual bool isProgressing() const;
-    virtual bool isCancelable() const;
-    virtual bool isAllMarked() const;
-    virtual bool isMarked(AbstractResource* res) const;
-    virtual QDateTime lastUpdate() const;
-    virtual QList< AbstractResource* > toUpdate() const;
+    virtual quint64 downloadSpeed() const override;
+    virtual QString statusDetail() const override;
+    virtual QString statusMessage() const override;
+    virtual bool isProgressing() const override;
+    virtual bool isCancelable() const override;
+    virtual bool isAllMarked() const override;
+    virtual bool isMarked(AbstractResource* res) const override;
+    virtual QDateTime lastUpdate() const override;
+    virtual QList< AbstractResource* > toUpdate() const override;
     virtual void addResources(const QList< AbstractResource* >& apps);
     virtual void removeResources(const QList< AbstractResource* >& apps);
-    virtual long unsigned int remainingTime() const;
-    virtual qreal progress() const;
-    virtual bool hasUpdates() const;
+    virtual long unsigned int remainingTime() const override;
+    virtual qreal progress() const override;
+    virtual bool hasUpdates() const override;
     virtual void prepare();
     
 public Q_SLOTS:

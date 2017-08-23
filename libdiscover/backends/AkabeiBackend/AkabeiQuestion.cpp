@@ -19,20 +19,23 @@
  *
  */
 
-#include "AkabeiQuestion.h"
+// Qt includes
 #include <QBoxLayout>
 #include <QLabel>
 #include <QButtonGroup>
-#include <qlayoutitem.h>
-#include <KPushButton>
-#include <KDebug>
+#include <QtWidgets>
+#include <QPushButton>
+#include <QDebug>
+
+// Own includes
+#include "AkabeiQuestion.h"
 
 AkabeiQuestion::AkabeiQuestion(AkabeiClient::TransactionQuestion* question, QWidget* parent)
-  : KDialog(parent),
+  : QDialog(parent),
     m_question(question),
     m_buttonGroup(0)
 {
-    setButtons(KDialog::None);
+    //setButtons(QDialog::None);
     
     QWidget * mainWidget = new QWidget(this);
     
@@ -48,7 +51,7 @@ AkabeiQuestion::AkabeiQuestion(AkabeiClient::TransactionQuestion* question, QWid
     buttonLayout->addSpacerItem(new QSpacerItem(50, 30, QSizePolicy::Expanding, QSizePolicy::Minimum));
     
     foreach (const AkabeiClient::TransactionAnswer &answer, question->possibleAnswers()) {
-        KPushButton * button = new KPushButton(mainWidget);
+        QPushButton * button = new QPushButton(mainWidget);
         button->setObjectName(answer.letter);
         button->setText(answer.message);
         if (question->suggestedAnswer() == answer) {
@@ -60,7 +63,7 @@ AkabeiQuestion::AkabeiQuestion(AkabeiClient::TransactionQuestion* question, QWid
     connect(m_buttonGroup, static_cast<void (QButtonGroup::*)(QAbstractButton *)>(&QButtonGroup::buttonClicked), this, &AkabeiQuestion::buttonClicked);
     layout->addItem(buttonLayout);
     
-    setMainWidget(mainWidget);
+    //setMainWidget(mainWidget);
 }
 
 void AkabeiQuestion::buttonClicked(QAbstractButton* button)
@@ -71,6 +74,6 @@ void AkabeiQuestion::buttonClicked(QAbstractButton* button)
 
 QString AkabeiQuestion::ask()
 {
-    KDialog::exec();
+    QDialog::exec();
     return m_answer;
 }

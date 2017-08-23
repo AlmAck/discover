@@ -1,5 +1,6 @@
 /*
  * Copyright 2013  Lukas Appelhans <l.appelhans@gmx.de>
+ * Copyright 2016  Luca Giambonini <almack@chakraos.org>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -22,22 +23,30 @@
 #ifndef AKABEINOTIFIER_H
 #define AKABEINOTIFIER_H
 
-#include <resources/AbstractKDEDModule.h>
+// Akabei includes
 #include <akabeibackend.h>
-#include <QVariantList>
+
+// Discover includes
+#include <BackendNotifierModule.h>
 
 class QTimer;
 
-class AkabeiNotifier : public AbstractKDEDModule
+class AkabeiNotifier : public BackendNotifierModule
 {
     Q_OBJECT
-    Q_CLASSINFO("D-Bus Interface", "org.kde.muon.akabei")
+    Q_PLUGIN_METADATA(IID "org.kde.discover.BackendNotifierModule")
+    Q_INTERFACES(BackendNotifierModule)
 public:
-    AkabeiNotifier(QObject* parent, const QVariantList &);
-    ~AkabeiNotifier();
+    AkabeiNotifier(QObject* parent = 0);
+    virtual ~AkabeiNotifier();
+
+    virtual bool isSystemUpToDate() const Q_DECL_OVERRIDE Q_DECL_FINAL;
+    virtual void recheckSystemUpdateNeeded() Q_DECL_OVERRIDE Q_DECL_FINAL;
+    virtual uint securityUpdatesCount() Q_DECL_OVERRIDE Q_DECL_FINAL;
+    virtual uint updatesCount() Q_DECL_OVERRIDE Q_DECL_FINAL;
     
 public Q_SLOTS:
-    virtual Q_SCRIPTABLE void recheckSystemUpdateNeeded();
+    virtual void configurationChanged();    
     
 private Q_SLOTS:
     void backendStateChanged(Akabei::Backend::Status status);
@@ -45,6 +54,7 @@ private Q_SLOTS:
     
 private:
     QTimer * m_timer;
+    int m_normalUpdates;
 };
 
 #endif // AKABEINOTIFIER_H

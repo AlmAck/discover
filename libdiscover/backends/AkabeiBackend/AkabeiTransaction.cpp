@@ -19,23 +19,32 @@
  *
  */
 
+// Qt includes
+#include <QButtonGroup>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
+
+// KF5 includes
+#include <KMessageBox>
+#include <KLocalizedString>
+
+// Akabei includes
+#include <akabeidatabase.h>
+#include <akabeiquery.h>
+#include <akabeiclientqueue.h>
+#include <akabeiclientbackend.h>
+#include <akabeiclienttransactionhandler.h>
+
+// DiscoverCommon includes
+#include <Transaction/TransactionModel.h>
+
+// Own includes
 #include "AkabeiTransaction.h"
 #include "AkabeiResource.h"
 #include "AkabeiBackend.h"
 #include "AkabeiQuestion.h"
-#include <Transaction/TransactionModel.h>
-#include <akabeiclientqueue.h>
-#include <akabeiclientbackend.h>
-#include <akabeiclienttransactionhandler.h>
-#include <KDebug>
-#include <KMessageBox>
-#include <QButtonGroup>
-#include <KDialog>
-#include <akabeidatabase.h>
-#include <akabeiquery.h>
-#include <QLabel>
-#include <QPushButton>
-#include <QVBoxLayout>
+
 //FIXME: Transaction messages? How to show them properly?
 
 AkabeiTransaction::AkabeiTransaction(AkabeiBackend* parent, AbstractResource* resource, Transaction::Role role)
@@ -91,7 +100,7 @@ void AkabeiTransaction::start()
         if (res) {
             AkabeiClient::Backend::instance()->queue()->addPackage(qobject_cast<AkabeiResource*>(res)->installedPackage(), AkabeiClient::Remove);
         } else {
-            Akabei::Package::List pkgs = Akabei::Backend::instance()->localDatabase()->queryPackages("SELECT * FROM packages JOIN provides WHERE provides.provides LIKE \"" + toRemove + '\"');
+            Akabei::Package::List pkgs = Akabei::Backend::instance()->localDatabase()->queryPackages(QLatin1String("SELECT * FROM packages JOIN provides WHERE provides.provides LIKE \"") + toRemove + QLatin1Char('\"'));
             foreach (Akabei::Package * p, pkgs)
                 AkabeiClient::Backend::instance()->queue()->addPackage(p, AkabeiClient::Remove);
         }
@@ -103,7 +112,7 @@ void AkabeiTransaction::start()
         } else {
             Akabei::Package::List packages;
             foreach (Akabei::Database * db, Akabei::Backend::instance()->databases()) {
-                packages << db->queryPackages("SELECT * FROM packages JOIN provides WHERE provides.provides LIKE \"" + toInstall + '\"');
+                packages << db->queryPackages(QLatin1String("SELECT * FROM packages JOIN provides WHERE provides.provides LIKE \"") + toInstall + QLatin1Char('\"'));
             } //NOTE: Probably ask the user here, or rather create a method in akabei to resolve the provider for me
             if (!packages.isEmpty())
                 AkabeiClient::Backend::instance()->queue()->addPackage(packages.first(), AkabeiClient::Install);
@@ -116,7 +125,7 @@ void AkabeiTransaction::start()
     connect(AkabeiClient::Backend::instance()->transactionHandler(), SIGNAL(newTransactionMessage(QString)), SLOT(transactionMessage(QString)));
     
     foreach (AkabeiClient::QueueItem * item, AkabeiClient::Backend::instance()->queue()->items())
-        kDebug() << "QUEUE ITEM" << item->package()->name() << (item->action() == AkabeiClient::Install);
+        qDebug() << "QUEUE ITEM" << item->package()->name() << (item->action() == AkabeiClient::Install);
     
     m_transactionMessages.clear();
     AkabeiClient::Backend::instance()->transactionHandler()->start(Akabei::ProcessingOption::NoProcessingOption);
@@ -143,7 +152,7 @@ void AkabeiTransaction::phaseChanged(AkabeiClient::TransactionProgress::Phase ph
 
 void AkabeiTransaction::transactionCreated(AkabeiClient::Transaction* transaction)
 {
-    kDebug() << "Transaction created";
+    qDebug() << "Transaction created";
     m_transaction = transaction;
     foreach (AkabeiClient::TransactionQuestion * q, transaction->questions()) {
         AkabeiQuestion question(q);
@@ -153,7 +162,7 @@ void AkabeiTransaction::transactionCreated(AkabeiClient::Transaction* transactio
         finished(false);
         return;
     } else {
-        kDebug() << "Continue with transaction";
+        qDebug() << "Continue with transaction";
         AkabeiClient::Backend::instance()->transactionHandler()->validate();
     }
 }
@@ -170,11 +179,11 @@ void AkabeiTransaction::validationFinished(bool successful)
 
 void AkabeiTransaction::finished(bool successful)
 {
-    kDebug() << "Finished" << successful;
+    qDebug() << "Finished" << successful;
     if (!successful) {
         QString err;
         foreach (const Akabei::Error &error, m_transaction->errors()) {
-            err.append(' ' + error.description());
+            err.append(QLatin1Char(' ') + error.description());
         }
         if (err.isEmpty())
             err = i18n("Something went wrong!");

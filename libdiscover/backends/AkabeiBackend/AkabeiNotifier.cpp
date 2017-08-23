@@ -18,25 +18,25 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  */
-#include "AkabeiNotifier.h"
 
+// Qt includes
 #include <QTimer>
-#include <KPluginFactory>
+
+// Akabei includes
 #include <akabeiclientbackend.h>
 #include <akabeiconfig.h>
 #include <akabeihelpers.h>
 #include <akabeidatabase.h>
 
-K_PLUGIN_FACTORY(MuonAkabeiNotifierFactory,
-                 registerPlugin<AkabeiNotifier>();
-                )
-K_EXPORT_PLUGIN(MuonAkabeiNotifierFactory("muon-akabei-notifier"))
+// Own includes
+#include "AkabeiNotifier.h"
 
-const int UPDATE_INTERVAL = 1000 * 60 * 30;//30 min
+const int UPDATE_INTERVAL = 1000 * 60 * 30; //30 min
 
-AkabeiNotifier::AkabeiNotifier(QObject* parent, const QVariantList &)
-  : AbstractKDEDModule("akabei", "muondiscover", parent),
-    m_timer(new QTimer(this))
+AkabeiNotifier::AkabeiNotifier(QObject* parent)
+    : BackendNotifierModule(parent),
+    m_timer(new QTimer(this)),
+    m_normalUpdates(0)
 {
     m_timer->setInterval(UPDATE_INTERVAL);
     connect(m_timer, &QTimer::timeout, this, &AkabeiNotifier::recheckSystemUpdateNeeded);
@@ -54,7 +54,7 @@ void AkabeiNotifier::init()
     
     /* Used to determine whether debugging prints are to be displayed later */
     Akabei::Config::instance()->setDebug(true);
-    
+
     AkabeiClient::Backend::instance()->initialize();
 }
 
@@ -70,14 +70,20 @@ void AkabeiNotifier::backendStateChanged(Akabei::Backend::Status status)
                 toBeUpgraded.append(latest);
             }
         }
-        
+
         if (!toBeUpgraded.isEmpty()) {
-            setSystemUpToDate(false, toBeUpgraded.count());
+            m_normalUpdates = toBeUpgraded.count();
+            emit foundUpdates();
         } else {
-            setSystemUpToDate(true);
+            m_normalUpdates = 0;
         }
         m_timer->start();
     }
+}
+
+void AkabeiNotifier::configurationChanged()
+{
+    recheckSystemUpdateNeeded();
 }
 
 void AkabeiNotifier::recheckSystemUpdateNeeded()
@@ -86,3 +92,19 @@ void AkabeiNotifier::recheckSystemUpdateNeeded()
     AkabeiClient::Backend::instance()->updateDatabase();
 }
 
+bool AkabeiNotifier::isSystemUpToDate() const
+{
+    return m_normalUpdates==0;
+}
+
+uint AkabeiNotifier::securityUpdatesCount()
+{
+    return 0;
+}
+
+uint AkabeiNotifier::updatesCount()
+{
+    return m_normalUpdates;
+}
+
+#include "AkabeiNotifier.moc"

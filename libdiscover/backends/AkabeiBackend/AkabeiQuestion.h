@@ -23,12 +23,15 @@
 #ifndef AKABEIQUESTION_H
 #define AKABEIQUESTION_H
 
-#include <KDialog>
+// Qt includes
+#include <QDialog>
+
+// Akabei includes
 #include <akabeiclienttransactionhandler.h>
 
 class QAbstractButton;
 class QButtonGroup;
-class AkabeiQuestion : public KDialog
+class AkabeiQuestion : public QDialog
 {
     Q_OBJECT
 public:

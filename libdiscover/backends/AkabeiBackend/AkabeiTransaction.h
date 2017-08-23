@@ -22,6 +22,7 @@
 #ifndef AKABEITRANSACTION_H
 #define AKABEITRANSACTION_H
 
+// DiscoverCommon includes
 #include <Transaction/Transaction.h>
 #include <akabeiclienttransactionhandler.h>
 

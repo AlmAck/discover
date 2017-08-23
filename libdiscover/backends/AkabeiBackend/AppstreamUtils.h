@@ -20,11 +20,13 @@
 
 #ifndef APPSTREAMUTILS_H
 #define APPSTREAMUTILS_H
+
+// Own includes
 #include "AkabeiBackend.h"
 
 namespace AppstreamUtils
 {
     QHash<QString, ApplicationData> fetchAppData(const QString& path);
-};
+}
 
 #endif // APPSTREAMUTILS_H

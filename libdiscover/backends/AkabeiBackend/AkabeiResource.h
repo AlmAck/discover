@@ -20,8 +20,10 @@
 #ifndef AKABEIRESOURCE_H
 #define AKABEIRESOURCE_H
 
+// DiscoverCommon includes
 #include <resources/AbstractResource.h>
-#include <akabeicore/akabeipackage.h>
+// Akabei includes
+#include <akabeipackage.h>
 
 class KJob;
 class AkabeiBackend;
@@ -33,7 +35,7 @@ class DISCOVERCOMMON_EXPORT AkabeiResource : public AbstractResource
         AkabeiResource(Akabei::Package * pkg, AkabeiBackend * parent);
         
         ///used as internal identification of a resource
-        virtual QString packageName() const;
+        virtual QString packageName() const override;
         
         ///resource name to be displayed
         virtual QString name();
@@ -42,14 +44,14 @@ class DISCOVERCOMMON_EXPORT AkabeiResource : public AbstractResource
         virtual QString comment();
         
         ///xdg-compatible icon name to represent the resource
-        virtual QString icon() const;
+        virtual QString icon() const override;
         
         ///@returns whether invokeApplication makes something
         /// false if not overridden
-        virtual bool canExecute() const;
+        virtual bool canExecute() const override;
         
         ///executes the resource, if applies.
-        Q_SCRIPTABLE virtual void invokeApplication() const;
+        virtual void invokeApplication() const override;
         
         virtual State state();
         
@@ -58,7 +60,7 @@ class DISCOVERCOMMON_EXPORT AkabeiResource : public AbstractResource
         ///@returns a URL that points to the content
         virtual QUrl homepage();
         
-        virtual bool isTechnical() const;
+        virtual bool isTechnical() const override;
 
         virtual QUrl thumbnailUrl();
         virtual QUrl screenshotUrl();
@@ -66,20 +68,20 @@ class DISCOVERCOMMON_EXPORT AkabeiResource : public AbstractResource
         virtual int size();
         virtual QString license();
         
-        virtual QString installedVersion() const;
-        virtual QString availableVersion() const;
+        virtual QString installedVersion() const override;
+        virtual QString availableVersion() const override;
         virtual QString longDescription();
         
-        virtual QString origin() const;
+        virtual QString origin() const override;
         virtual QString section();
         
         ///@returns what kind of mime types the resource can consume
-        virtual QStringList mimetypes() const;
+        virtual QStringList mimetypes() const override;
         
         virtual QList<PackageState> addonsInformation();
         bool isFromSecureOrigin() const;
         
-        virtual QStringList executables() const;
+        virtual QStringList executables() const override;
         
         Akabei::Package * package() const;
         Akabei::Package * installedPackage() const;

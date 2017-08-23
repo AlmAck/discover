@@ -19,16 +19,28 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  */
+
+// Qt includes
+#include <QDateTime>
+
+// Akabei includes
+#include <akabeiclientbackend.h>
+#include <akabeiclienttransactionhandler.h>
+
+// KF5 includes
+//#include <KMessageBox>
+#include <kmessagebox.h>
+#include <KLocalizedString>
+
+// DiscoverCommon includes
+#include <resources/AbstractResource.h>
+
+// Own includes
 #include "AkabeiUpdater.h"
 #include "AkabeiBackend.h"
 #include "AkabeiResource.h"
 #include "AkabeiQuestion.h"
-#include <resources/AbstractResource.h>
-#include <QDateTime>
-#include <akabeiclientbackend.h>
-#include <akabeiclienttransactionhandler.h>
-#include <KDebug>
-#include <KMessageBox>
+
 
 AkabeiUpdater::AkabeiUpdater(AkabeiBackend * parent)
   : AbstractBackendUpdater(parent),
@@ -47,7 +59,6 @@ AkabeiUpdater::~AkabeiUpdater()
 
 void AkabeiUpdater::prepare()
 {
-    kDebug();
     foreach (AbstractResource * res, m_backend->allResources()) {
         if (res->canUpgrade()) {
             m_marked.append(res);
@@ -61,7 +72,6 @@ void AkabeiUpdater::start()
         KMessageBox::error(0, i18n("Another transaction is still running!"), i18n("Error"));
         return;
     }
-    kDebug();
     m_isProgressing = true;
     emit progressingChanged(m_isProgressing);
     AkabeiClient::Queue * queue = AkabeiClient::Backend::instance()->queue();
@@ -147,14 +157,13 @@ void AkabeiUpdater::transactionCreated(AkabeiClient::Transaction* transaction)
         finished(false);
         return;
     } else {
-        kDebug() << "Continue with transaction";
+        qDebug() << "Continue with transaction";
         AkabeiClient::Backend::instance()->transactionHandler()->validate();
     }
 }
 
 void AkabeiUpdater::validationFinished(bool success)
 {
-    kDebug();
     disconnect(AkabeiClient::Backend::instance()->transactionHandler(), SIGNAL(validationFinished(bool)), this, SLOT(validationFinished(bool)));
     connect(AkabeiClient::Backend::instance()->transactionHandler(), SIGNAL(finished(bool)), SLOT(finished(bool)));
     
@@ -168,15 +177,14 @@ void AkabeiUpdater::validationFinished(bool success)
 
 void AkabeiUpdater::finished(bool success)
 {
-    kDebug();
     m_isProgressing = false;
     emit progressingChanged(m_isProgressing);
 
-    kDebug() << "Finished" << success;
+    qDebug() << "Finished" << success;
     if (!success) {
         QString err;
         foreach (const Akabei::Error &error, m_transaction->errors()) {
-            err.append(' ' + error.description());
+            err.append(QLatin1Char(' ') + error.description());
         }
         if (err.isEmpty())
             err = i18n("Something went wrong!");

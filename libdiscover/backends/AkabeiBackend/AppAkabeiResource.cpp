@@ -19,12 +19,19 @@
  *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
-#include "AppAkabeiResource.h"
-#include <KGlobal>
-#include <KStandardDirs>
-#include <KToolInvocation>
+// Qt includes
 #include <QDebug>
+#include <QStandardPaths>
+
+// KF5 includes
+//#include <krun.h>
+//#include <kdesktopfileactions.h>
+
+// Akabei includes
 #include <akabeipackage.h>
+
+// Own includes
+#include "AppAkabeiResource.h"
 
 AppAkabeiResource::AppAkabeiResource(const ApplicationData& data,
                                              Akabei::Package * pkg,
@@ -35,7 +42,8 @@ AppAkabeiResource::AppAkabeiResource(const ApplicationData& data,
 
 QString AppAkabeiResource::name()
 {
-    QString ret = m_appdata.name.value(KGlobal::locale()->language());
+    //QString ret = QString::fromLatin1(m_appdata.name.value(QLocale().language()).toLatin1();
+    QString ret;
     if(ret.isEmpty()) ret = m_appdata.name.value(QString());
     if(ret.isEmpty()) ret = m_appdata.pkgname;
     if(ret.isEmpty()) ret = AkabeiResource::name();
@@ -44,7 +52,8 @@ QString AppAkabeiResource::name()
 
 QString AppAkabeiResource::longDescription()
 {
-    QString ret = m_appdata.summary.value(KGlobal::locale()->language());
+    //QString ret = QString::fromLatin1(m_appdata.summary.value(QLocale().language()));
+    QString ret;
     if(ret.isEmpty()) ret = m_appdata.summary.value(QString());
     if(ret.isEmpty()) ret = AkabeiResource::longDescription();
     return ret;
@@ -67,7 +76,7 @@ QStringList AppAkabeiResource::categories()
 
 QUrl AppAkabeiResource::homepage()
 {
-    return m_appdata.url.isEmpty() ? AkabeiResource::homepage() : m_appdata.url;
+    return m_appdata.url.isEmpty() ? AkabeiResource::homepage() : QUrl(m_appdata.url);
 }
 
 bool AppAkabeiResource::isTechnical() const
@@ -77,7 +86,7 @@ bool AppAkabeiResource::isTechnical() const
 
 QStringList AppAkabeiResource::executables() const
 {
-    QString desktopFile = KGlobal::dirs()->findResource("xdgdata-apps", m_appdata.id);
+    QString desktopFile = QStandardPaths::locate(QStandardPaths::ApplicationsLocation, m_appdata.id);
     QStringList ret;
     if(!desktopFile.isEmpty())
         ret += desktopFile;
@@ -87,6 +96,6 @@ QStringList AppAkabeiResource::executables() const
 void AppAkabeiResource::invokeApplication() const
 {
     QStringList exes = executables();
-    if(!exes.isEmpty())
-        KToolInvocation::startServiceByDesktopPath(exes.first());
+    //if(!exes.isEmpty())
+        //KDesktopFileActions::run(exes.first(), true);
 }

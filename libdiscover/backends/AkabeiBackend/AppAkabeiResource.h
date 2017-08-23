@@ -22,6 +22,7 @@
 #ifndef APPPACKAGEKITRESOURCE_H
 #define APPPACKAGEKITRESOURCE_H
 
+// Own includes
 #include "AkabeiResource.h"
 #include "AkabeiBackend.h"
 
@@ -30,16 +31,16 @@ class AppAkabeiResource : public AkabeiResource
     Q_OBJECT
     public:
         explicit AppAkabeiResource(const ApplicationData& data, Akabei::Package * pkg, AkabeiBackend* parent);
-        virtual bool isTechnical() const;
+        virtual bool isTechnical() const override;
         virtual QString name();
-        virtual QString icon() const;
-        virtual QStringList mimetypes() const;
+        virtual QString icon() const override;
+        virtual QStringList mimetypes() const override;
         virtual QStringList categories();
         virtual QString longDescription();
         virtual QUrl homepage();
-        virtual bool canExecute() const { return true; }
-        virtual QStringList executables() const;
-        virtual void invokeApplication() const;
+        virtual bool canExecute() const override { return true; }
+        virtual QStringList executables() const override;
+        virtual void invokeApplication() const override;
 
     private:
         ApplicationData m_appdata;

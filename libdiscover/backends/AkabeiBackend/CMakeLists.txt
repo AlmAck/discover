@@ -1,7 +1,9 @@
 include_directories(
-${AKABEICORE_INCLUDE_DIR}
-${AKABEICLIENT_INCLUDE_DIR}
+    ${AKABEICORE_INCLUDE_DIR}
+    ${AKABEICLIENT_INCLUDE_DIR}
+    #${QJSON-qt5_INCLUDE_DIR}
 )
+
 
 set(akabeibackend_SRCS
     AppstreamUtils.cpp
@@ -13,20 +15,28 @@ set(akabeibackend_SRCS
     AkabeiTransaction.cpp
 )
 
-add_library(akabei-backend ${akabeibackend_SRCS})
-target_link_libraries(akabei-backend ${QT_QTCORE_LIBRARY} ${QT_QTGUI_LIBRARY} ${KDE4_KDECORE_LIBS} ${KDE4_KDEUI_LIBS} ${KDE4_KIO_LIBS} ${qjson_LIBRARIES} ${AKABEICLIENT_LIBRARIES} ${AKABEICORE_LIBRARIES} Discover::Common)
+add_library(akabei-backend MODULE ${akabeibackend_SRCS})
+target_link_libraries(akabei-backend Discover::Common
+                                     Qt5::Core
+                                     Qt5::Network
+                                     KF5::KIOWidgets
+                                     #${QJSON-qt5_LIBRARIES}
+                                     ${AKABEICLIENT_LIBRARIES}
+                                     ${AKABEICORE_LIBRARIES})
+
 install(TARGETS akabei-backend DESTINATION ${PLUGIN_INSTALL_DIR}/discover)
 install(FILES akabei-backend.desktop DESTINATION ${DATA_INSTALL_DIR}/libdiscover/backends)
 install(FILES akabei-backend-categories.xml DESTINATION ${DATA_INSTALL_DIR}/libdiscover/categories)
 
+#notifier
 set(akabeinotifier_SRCS
     AkabeiNotifier.cpp
 )
 
-add_library(kded_muonakabeinotifier MODULE ${akabeinotifier_SRCS})
+add_library(MuonPackageKitNotifier MODULE ${akabeinotifier_SRCS})
+target_link_libraries(MuonPackageKitNotifier Discover::Notifiers
+                                             Qt5::Network
+                                             ${AKABEICLIENT_LIBRARIES}
+                                             ${AKABEICORE_LIBRARIES})
 
-target_link_libraries(kded_muonakabeinotifier ${KDE4_KDECORE_LIBS} ${KDE4_KDEUI_LIBS} ${AKABEICLIENT_LIBRARIES} ${AKABEICORE_LIBRARIES} Discover::Common)
-
-install(TARGETS kded_muonakabeinotifier DESTINATION ${PLUGIN_INSTALL_DIR})
-
-install(FILES muonakabeinotifier.desktop  DESTINATION  ${SERVICES_INSTALL_DIR}/kded)
+install(TARGETS MuonPackageKitNotifier DESTINATION ${PLUGIN_INSTALL_DIR}/discover-notifier)

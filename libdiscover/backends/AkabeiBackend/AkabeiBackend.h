@@ -21,14 +21,23 @@
 #ifndef MUONAKABEIBACKEND_H
 #define MUONAKABEIBACKEND_H
 
-#include <discovercommon_export.h>
-#include "resources/AbstractResourcesBackend.h"
-#include "AkabeiUpdater.h"
+// Qt includes
 #include <QVariantList>
 #include <QUuid>
 #include <QQueue>
-#include <akabeicore/akabeibackend.h>
 
+// DiscoverCommon includes
+#include <resources/AbstractResourcesBackend.h>
+#include "Transaction/AddonList.h"
+#include "discovercommon_export.h"
+
+// Akabei includes
+#include <akabeibackend.h>
+
+// Own includes
+#include "AkabeiUpdater.h"
+
+class QAction;
 class AkabeiTransaction;
 
 struct ApplicationData
@@ -46,33 +55,35 @@ struct ApplicationData
 
 class DISCOVERCOMMON_EXPORT AkabeiBackend : public AbstractResourcesBackend
 {
-    Q_OBJECT
+Q_OBJECT
 public:
-    explicit AkabeiBackend(QObject *parent = 0);
-    ~AkabeiBackend();
+    explicit AkabeiBackend(QObject *parent = nullptr);
+    virtual ~AkabeiBackend();
 
-    bool isValid() const;
-    AbstractReviewsBackend *reviewsBackend() const;
-    Q_SCRIPTABLE AbstractResource* resourceByPackageName(const QString& name) const;
+    virtual void setMetaData(const QString& path) override;
+    virtual bool isValid() const override;
+    virtual AbstractReviewsBackend *reviewsBackend() const override;
+    virtual AbstractResource* resourceByPackageName(const QString& name) const override;
 
-    int updatesCount() const;
+    virtual int updatesCount() const override;
     
-    QVector< AbstractResource* > allResources() const;
-    QList<AbstractResource*> searchPackageName(const QString& searchText);
+    virtual QVector< AbstractResource* > allResources() const override;
+    virtual QList<AbstractResource*> searchPackageName(const QString& searchText) override;
     
     void installApplication(AbstractResource *app, const AddonList& addons);
-    void installApplication(AbstractResource *app);
-    void removeApplication(AbstractResource *app);
-    void cancelTransaction(AbstractResource *app);
+    virtual void installApplication(AbstractResource *app) override;
+    virtual void removeApplication(AbstractResource *app) override;
+    virtual void cancelTransaction(AbstractResource *app) override;
     
-    AbstractBackendUpdater* backendUpdater() const;
-    virtual QList<AbstractResource*> upgradeablePackages() const;
+    virtual AbstractBackendUpdater* backendUpdater() const override;
+    virtual QList<AbstractResource*> upgradeablePackages() const override;
     
     void removeFromQueue(AkabeiTransaction * trans);
     
     bool isTransactionRunning() const;
-    
-    virtual bool isFetching() const { return m_isFetching; }
+
+    virtual bool isFetching() const override { return m_isFetching; }
+    virtual QList<QAction*> messageActions() const override { return m_messageActions; }
 
 public Q_SLOTS:
     void statusChanged(Akabei::Backend::Status);
@@ -82,9 +93,10 @@ public Q_SLOTS:
 private:
     QHash<QString, AbstractResource*> m_packages;
     QQueue<AkabeiTransaction*> m_transactionQueue;
-    AkabeiUpdater * m_updater;
+    AkabeiUpdater* m_updater;
     QHash<QString, ApplicationData> m_appdata;
     bool m_isFetching;
+    QList<QAction*> m_messageActions;
 };
 
 #endif

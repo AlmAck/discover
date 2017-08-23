@@ -32,7 +32,9 @@ endif()
 find_package(AppstreamQt 0.9.2)
 find_package(KF5Attica)
 find_package(KF5NewStuff)
+
 # find_package(BODEGA QUIET)
+find_package(AkabeiClient QUIET)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
