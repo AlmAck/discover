@@ -19,15 +19,16 @@
  ***************************************************************************/
 
 #include "DummyTest.h"
-#include <modeltest.h>
+#include <tests/modeltest.h>
+#include <KFormat>
 #include <resources/ResourcesModel.h>
 #include <resources/ResourcesProxyModel.h>
 #include <resources/AbstractBackendUpdater.h>
 #include <ApplicationAddonsModel.h>
-#include <Transaction/TransactionModel.h>
 #include <ReviewsBackend/ReviewsModel.h>
 #include <UpdateModel/UpdateModel.h>
 #include <resources/ResourcesUpdatesModel.h>
+#include <Transaction/TransactionModel.h>
 
 #include <qtest.h>
 #include <QtTest>
@@ -52,8 +53,6 @@ public:
     UpdateDummyTest(QObject* parent = nullptr): QObject(parent)
     {
         m_model = new ResourcesModel(QStringLiteral("dummy-backend"), this);
-//         new ModelTest(m_model, m_model);
-
         m_appBackend = backendByName(m_model, QStringLiteral("DummyBackend"));
     }
 
@@ -67,59 +66,93 @@ private Q_SLOTS:
         }
     }
 
-    void testUpdate()
+    void testInformation()
     {
         ResourcesUpdatesModel* rum = new ResourcesUpdatesModel(this);
-//         new ModelTest(rum, rum);
+        new ModelTest(rum, rum);
 
         UpdateModel* m = new UpdateModel(this);
-//         new ModelTest(m, m);
+        new ModelTest(m, m);
         m->setBackend(rum);
 
         rum->prepare();
-        QCOMPARE(m_appBackend->updatesCount(), 212);
+        QSignalSpy spySetup(m_appBackend->backendUpdater(), &AbstractBackendUpdater::progressingChanged);
+        QVERIFY(!m_appBackend->backendUpdater()->isProgressing() || spySetup.wait());
+        QCOMPARE(m_appBackend->updatesCount(), m_appBackend->property("startElements").toInt()*2/3);
+        QCOMPARE(m->hasUpdates(), true);
+
+        QCOMPARE(m->index(0,0).data(UpdateModel::ChangelogRole).toString(), {});
+
+        QSignalSpy spy(m, &QAbstractItemModel::dataChanged);
+        m->fetchChangelog(0);
+        QVERIFY(spy.count() || spy.wait());
+        QCOMPARE(spy.count(), 1);
+        delete m;
+    }
+
+    void testUpdate()
+    {
+        ResourcesUpdatesModel* rum = new ResourcesUpdatesModel(this);
+        new ModelTest(rum, rum);
+
+        UpdateModel* m = new UpdateModel(this);
+        new ModelTest(m, m);
+        m->setBackend(rum);
+
+        rum->prepare();
+        QSignalSpy spySetup(m_appBackend->backendUpdater(), &AbstractBackendUpdater::progressingChanged);
+        QVERIFY(!m_appBackend->backendUpdater()->isProgressing() || spySetup.wait());
+        QCOMPARE(m_appBackend->updatesCount(), m_appBackend->property("startElements").toInt()*2/3);
         QCOMPARE(m->hasUpdates(), true);
 
         for(int i=0, c=m->rowCount(); i<c; ++i) {
-            const QModelIndex idx = m->index(i,0);
+            const QModelIndex resourceIdx = m->index(i,0);
+            QVERIFY(resourceIdx.isValid());
 
-            QVERIFY(!idx.data(UpdateModel::ResourceRole).value<QObject*>());
-            QCOMPARE(idx.data(UpdateModel::SizeRole).toString(), QStringLiteral("12.7 KiB"));
-            QCOMPARE(idx.data(UpdateModel::VersionRole).toString(), QString());
-            for(int j=0, c=m->rowCount(idx); j<c; ++j) {
-                const QModelIndex resourceIdx = idx.child(j,0);
-                QVERIFY(resourceIdx.isValid());
+            AbstractResource* res = qobject_cast<AbstractResource*>(resourceIdx.data(UpdateModel::ResourceRole).value<QObject*>());
+            QVERIFY(res);
 
-                AbstractResource* res = qobject_cast<AbstractResource*>(resourceIdx.data(UpdateModel::ResourceRole).value<QObject*>());
-                QVERIFY(res);
-                QCOMPARE(resourceIdx.data(UpdateModel::SizeRole).toString(), QStringLiteral("123 B"));
+            QCOMPARE(Qt::CheckState(resourceIdx.data(Qt::CheckStateRole).toInt()), Qt::Checked);
+            QVERIFY(m->setData(resourceIdx, int(Qt::Unchecked), Qt::CheckStateRole));
+            QCOMPARE(Qt::CheckState(resourceIdx.data(Qt::CheckStateRole).toInt()), Qt::Unchecked);
+            QCOMPARE(resourceIdx.data(Qt::DisplayRole).toString(), res->name());
 
-                QCOMPARE(Qt::CheckState(resourceIdx.data(Qt::CheckStateRole).toInt()), Qt::Checked);
-                QVERIFY(m->setData(resourceIdx, int(Qt::Unchecked), Qt::CheckStateRole));
-                QCOMPARE(Qt::CheckState(resourceIdx.data(Qt::CheckStateRole).toInt()), Qt::Unchecked);
-                QCOMPARE(resourceIdx.data(Qt::DisplayRole).toString(), res->name());
-
-                if (j!=0) {
-                    QVERIFY(m->setData(resourceIdx, int(Qt::Checked), Qt::CheckStateRole));
-                }
+            if (i!=0) {
+                QVERIFY(m->setData(resourceIdx, int(Qt::Checked), Qt::CheckStateRole));
             }
         }
 
-
-        rum->updateAll();
-
         QSignalSpy spy(rum, &ResourcesUpdatesModel::progressingChanged);
-        QVERIFY(spy.wait());
-        QCOMPARE(rum->isProgressing(), true);
-        QVERIFY(spy.wait());
+        QVERIFY(!rum->isProgressing() || spy.wait());
         QCOMPARE(rum->isProgressing(), false);
 
         QCOMPARE(m_appBackend->updatesCount(), m->rowCount());
         QCOMPARE(m->hasUpdates(), true);
 
         rum->prepare();
+
+        spy.clear();
+        QCOMPARE(rum->isProgressing(), false);
         rum->updateAll();
-        QVERIFY(spy.wait());
+        QVERIFY(spy.count() || spy.wait());
+        QCOMPARE(rum->isProgressing(), true);
+
+        QCOMPARE(TransactionModel::global()->rowCount(), 1);
+        connect(TransactionModel::global(), &TransactionModel::progressChanged, this, []() {
+            const int progress = TransactionModel::global()->progress();
+            static int lastProgress = -1;
+            Q_ASSERT(progress >= lastProgress || (TransactionModel::global()->rowCount() == 0 && progress == 0));
+            lastProgress = progress;
+        });
+
+        QTest::qWait(20);
+        QScopedPointer<ResourcesUpdatesModel> rum2(new ResourcesUpdatesModel(this));
+        new ModelTest(rum2.data(), rum2.data());
+
+        QScopedPointer<UpdateModel> m2(new UpdateModel(this));
+        new ModelTest(m2.data(), m2.data());
+        m->setBackend(rum2.data());
+
         QCOMPARE(rum->isProgressing(), true);
         QVERIFY(spy.wait());
         QCOMPARE(rum->isProgressing(), false);

@@ -21,62 +21,58 @@
 #ifndef UPDATEMODEL_H
 #define UPDATEMODEL_H
 
-#include <QtCore/QAbstractItemModel>
+#include <QAbstractListModel>
 #include "discovercommon_export.h"
 
 class ResourcesUpdatesModel;
 class AbstractResource;
 class UpdateItem;
 
-class DISCOVERCOMMON_EXPORT UpdateModel : public QAbstractItemModel
+class DISCOVERCOMMON_EXPORT UpdateModel : public QAbstractListModel
 {
     Q_OBJECT
     Q_PROPERTY(ResourcesUpdatesModel* backend READ backend WRITE setBackend)
     Q_PROPERTY(bool hasUpdates READ hasUpdates NOTIFY hasUpdatesChanged)
     Q_PROPERTY(int toUpdateCount READ toUpdateCount NOTIFY toUpdateChanged)
     Q_PROPERTY(int totalUpdatesCount READ totalUpdatesCount NOTIFY hasUpdatesChanged)
+    Q_PROPERTY(QString updateSize READ updateSize NOTIFY updateSizeChanged)
 public:
 
     enum Roles {
         VersionRole = Qt::UserRole + 1,
         SizeRole,
         ResourceRole,
-        ResourceProgressRole
+        ResourceProgressRole,
+        ChangelogRole,
+        SectionRole
     };
 
     explicit UpdateModel(QObject *parent = nullptr);
-    ~UpdateModel();
+    ~UpdateModel() override;
 
     QVariant data(const QModelIndex &index, int role) const override;
-    QVariant headerData(int section, Qt::Orientation orientation,
-                        int role) const override;
     Qt::ItemFlags flags(const QModelIndex &index) const override;
-    QModelIndex index(int row, int column,
-                      const QModelIndex &parent = QModelIndex()) const override;
-    QModelIndex parent(const QModelIndex &index) const override;
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
-    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
 
     bool setData(const QModelIndex &index, const QVariant &value, int role) override;
     void setResources(const QList<AbstractResource*>& res);
     UpdateItem *itemFromIndex(const QModelIndex &index) const;
 
-    void checkResources(const QList< AbstractResource* >& resource, bool checked);
+    void checkResources(const QList<AbstractResource*>& resource, bool checked);
     QHash<int,QByteArray> roleNames() const override;
 
     bool hasUpdates() const;
 
     ///all upgradeable packages
-    int totalUpdatesCount() const;
+    int totalUpdatesCount() const { return m_updateItems.count(); }
 
     ///packages marked to upgrade
     int toUpdateCount() const;
 
-    enum Columns {
-        NameColumn = 0,
-        VersionColumn,
-        SizeColumn
-    };
+    Q_SCRIPTABLE void fetchChangelog(int row);
+
+    QString updateSize() const;
+
     ResourcesUpdatesModel* backend() const;
 
 public Q_SLOTS:
@@ -85,16 +81,18 @@ public Q_SLOTS:
 Q_SIGNALS:
     void hasUpdatesChanged(bool hasUpdates);
     void toUpdateChanged();
+    void updateSizeChanged();
 
 private:
+    void resourceDataChanged(AbstractResource* res, const QVector<QByteArray> &properties);
+    void integrateChangelog(const QString &changelog);
     QModelIndex indexFromItem(UpdateItem* item) const;
-    UpdateItem* itemFromResource(AbstractResource* res, UpdateItem* root);
+    UpdateItem* itemFromResource(AbstractResource* res);
     void resourceHasProgressed(AbstractResource* res, qreal progress);
     void activityChanged();
 
-    QScopedPointer<UpdateItem> m_rootItem;
+    QVector<UpdateItem*> m_updateItems;
     ResourcesUpdatesModel* m_updates;
-    int m_updatesCount;
 };
 
 #endif // UPDATEMODEL_H

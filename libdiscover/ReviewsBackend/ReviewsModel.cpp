@@ -18,7 +18,6 @@
  *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
-#include "ReviewsModel.h"
 #include <ReviewsBackend/AbstractReviewsBackend.h>
 #include <ReviewsBackend/Review.h>
 #include <resources/ResourcesModel.h>
@@ -34,10 +33,7 @@ ReviewsModel::ReviewsModel(QObject* parent)
     , m_canFetchMore(true)
 {}
 
-ReviewsModel::~ReviewsModel()
-{
-    qDeleteAll(m_reviews);
-}
+ReviewsModel::~ReviewsModel() = default;
 
 QHash< int, QByteArray > ReviewsModel::roleNames() const
 {
@@ -101,10 +97,8 @@ void ReviewsModel::setResource(AbstractResource* app)
 {
     if(m_app!=app) {
         beginResetModel();
-        qDeleteAll(m_reviews);
         m_reviews.clear();
         m_lastPage = 0;
-        endResetModel();
 
         if(m_backend) {
             disconnect(m_backend, &AbstractReviewsBackend::reviewsReady, this, &ReviewsModel::addReviews);
@@ -116,7 +110,9 @@ void ReviewsModel::setResource(AbstractResource* app)
 
             QMetaObject::invokeMethod(this, "restartFetching", Qt::QueuedConnection);
         }
+        endResetModel();
         emit rowsChanged();
+        emit resourceChanged();
     }
 }
 
@@ -133,7 +129,7 @@ void ReviewsModel::restartFetching()
 
 void ReviewsModel::fetchMore(const QModelIndex& parent)
 {
-    if(!m_backend || !m_app || m_app->backend()->isFetching() || m_backend->isFetching() || parent.isValid() || !m_canFetchMore)
+    if(!m_backend || !m_app || parent.isValid() || m_backend->isFetching() || !m_canFetchMore)
         return;
 
     m_lastPage++;
@@ -141,14 +137,14 @@ void ReviewsModel::fetchMore(const QModelIndex& parent)
 //     qDebug() << "fetching reviews... " << m_lastPage;
 }
 
-void ReviewsModel::addReviews(AbstractResource* app, const QList<Review*>& reviews)
+void ReviewsModel::addReviews(AbstractResource* app, const QVector<ReviewPtr>& reviews, bool canFetchMore)
 {
     if(app!=m_app)
         return;
-    
-    m_canFetchMore=!reviews.isEmpty();
+
+    m_canFetchMore = canFetchMore;
 //     qDebug() << "reviews arrived..." << m_lastPage << reviews.size();
-    
+
     if(!reviews.isEmpty()) {
         beginInsertRows(QModelIndex(), rowCount(), rowCount()+reviews.size()-1);
         m_reviews += reviews;
@@ -157,29 +153,29 @@ void ReviewsModel::addReviews(AbstractResource* app, const QList<Review*>& revie
     }
 }
 
-bool ReviewsModel::canFetchMore(const QModelIndex&) const
+bool ReviewsModel::canFetchMore(const QModelIndex& /*parent*/) const
 {
     return m_canFetchMore;
 }
 
 void ReviewsModel::markUseful(int row, bool useful)
 {
-    Review* r = m_reviews[row];
+    Review* r = m_reviews[row].data();
     r->setUsefulChoice(useful ? Yes : No);
 //     qDebug() << "submitting usefulness" << r->applicationName() << r->id() << useful;
     m_backend->submitUsefulness(r, useful);
     const QModelIndex ind = index(row, 0, QModelIndex());
-    emit dataChanged(ind, ind);
+    emit dataChanged(ind, ind, {UsefulnessTotal, UsefulnessFavorable, UsefulChoice});
 }
 
 void ReviewsModel::deleteReview(int row)
 {
-    Review* r = m_reviews[row];
+    Review* r = m_reviews[row].data();
     m_backend->deleteReview(r);
 }
 
 void ReviewsModel::flagReview(int row, const QString& reason, const QString& text)
 {
-    Review* r = m_reviews[row];
+    Review* r = m_reviews[row].data();
     m_backend->flagReview(r, reason, text);
 }

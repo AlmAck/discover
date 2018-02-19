@@ -20,59 +20,81 @@
  ***************************************************************************/
 
 #include "PackageKitBackend.h"
+#include "PackageKitSourcesBackend.h"
 #include "PackageKitResource.h"
 #include "PackageKitUpdater.h"
 #include "AppPackageKitResource.h"
 #include "PKTransaction.h"
+#include "LocalFilePKResource.h"
+#include "TransactionSet.h"
 #include <resources/AbstractResource.h>
 #include <resources/StandardBackendUpdater.h>
-#include <Transaction/TransactionModel.h>
+#include <resources/SourcesModel.h>
+#include <appstream/OdrsReviewsBackend.h>
+#include <appstream/AppStreamIntegration.h>
+
+#include <QProcess>
 #include <QStringList>
 #include <QDebug>
 #include <QTimer>
-#include <QTimerEvent>
+#include <QStandardPaths>
+#include <QFile>
+
 #include <PackageKit/Transaction>
 #include <PackageKit/Daemon>
 #include <PackageKit/Details>
 
 #include <KLocalizedString>
 #include <QAction>
+#include <QMimeDatabase>
 
-MUON_BACKEND_PLUGIN(PackageKitBackend)
+#include "utils.h"
+#include "config-paths.h"
+
+DISCOVER_BACKEND_PLUGIN(PackageKitBackend)
+
+QString PackageKitBackend::locateService(const QString &filename)
+{
+    return QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("applications/")+filename);
+}
 
 PackageKitBackend::PackageKitBackend(QObject* parent)
     : AbstractResourcesBackend(parent)
     , m_updater(new PackageKitUpdater(this))
     , m_refresher(nullptr)
     , m_isFetching(0)
+    , m_reviews(AppStreamIntegration::global()->reviews())
 {
-    bool b = m_appdata.open();
-    Q_ASSERT(b && "must be able to open the appstream database");
-    if (!b) {
-        qWarning() << "Couldn't open the AppStream database";
-    }
-    reloadPackageList();
-
     QTimer* t = new QTimer(this);
     connect(t, &QTimer::timeout, this, &PackageKitBackend::refreshDatabase);
     t->setInterval(60 * 60 * 1000);
     t->setSingleShot(false);
     t->start();
 
-    QAction* updateAction = new QAction(this);
-    updateAction->setIcon(QIcon::fromTheme(QStringLiteral("system-software-update")));
-    updateAction->setText(i18nc("@action Checks the Internet for updates", "Check for Updates"));
-    updateAction->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_R));
-    connect(updateAction, &QAction::triggered, this, &PackageKitBackend::refreshDatabase);
-    m_messageActions += updateAction;
+    m_delayedDetailsFetch.setSingleShot(true);
+    m_delayedDetailsFetch.setInterval(0);
+    connect(&m_delayedDetailsFetch, &QTimer::timeout, this, &PackageKitBackend::performDetailsFetch);
 
     connect(PackageKit::Daemon::global(), &PackageKit::Daemon::updatesChanged, this, &PackageKitBackend::fetchUpdates);
     connect(PackageKit::Daemon::global(), &PackageKit::Daemon::isRunningChanged, this, &PackageKitBackend::checkDaemonRunning);
+    connect(m_reviews.data(), &OdrsReviewsBackend::ratingsReady, this, &AbstractResourcesBackend::emitRatingsReady);
+
+    SourcesModel::global()->addSourcesBackend(new PackageKitSourcesBackend(this));
+
+    QString error;
+    const bool b = m_appdata.load(&error);
+    reloadPackageList();
+
+    if (!b && m_packages.packages.isEmpty()) {
+        qWarning() << "Could not open the AppStream metadata pool" << error;
+
+        QTimer::singleShot(0, this, [this]() {
+            Q_EMIT passiveMessage(i18n("Please make sure that Appstream is properly set up on your system"));
+        });
+    }
 }
 
-PackageKitBackend::~PackageKitBackend()
-{
-}
+PackageKitBackend::~PackageKitBackend() = default;
 
 bool PackageKitBackend::isFetching() const
 {
@@ -94,138 +116,304 @@ void PackageKitBackend::acquireFetching(bool f)
 
 void PackageKitBackend::reloadPackageList()
 {
-    m_updatingPackages = m_packages;
-    
+    acquireFetching(true);
     if (m_refresher) {
         disconnect(m_refresher.data(), &PackageKit::Transaction::finished, this, &PackageKitBackend::reloadPackageList);
     }
 
-    foreach(const Appstream::Component& component, m_appdata.allComponents()) {
-        const auto res = new AppPackageKitResource(component, this);;
-        m_updatingPackages.packages[component.id()] = res;
-        foreach (const QString& pkg, component.packageNames()) {
-            m_updatingPackages.packageToApp[pkg] += component.id();
-        }
+    const auto components = m_appdata.components();
+    QStringList neededPackages;
+    neededPackages.reserve(components.size());
+    foreach(const AppStream::Component& component, components) {
+        if (component.kind() == AppStream::Component::KindFirmware)
+            continue;
 
-        foreach (const QString& pkg, component.extends()) {
-            m_updatingPackages.extendedBy[pkg] += res;
+        const auto pkgNames = component.packageNames();
+        if (pkgNames.isEmpty()) {
+            if (component.kind() == AppStream::Component::KindDesktopApp) {
+                const QString file = locateService(component.desktopId());
+                if (!file.isEmpty()) {
+                    auto trans = PackageKit::Daemon::searchFiles(file);
+                    connect(trans, &PackageKit::Transaction::package, this, [trans](PackageKit::Transaction::Info info, const QString &packageID){
+                        if (info == PackageKit::Transaction::InfoInstalled)
+                            trans->setProperty("installedPackage", packageID);
+                    });
+                    connect(trans, &PackageKit::Transaction::finished, this, [this, trans, component](PackageKit::Transaction::Exit status) {
+                        const auto pkgidVal = trans->property("installedPackage");
+                        if (status == PackageKit::Transaction::ExitSuccess && !pkgidVal.isNull()) {
+                            const auto pkgid = pkgidVal.toString();
+                            acquireFetching(true);
+                            auto res = addComponent(component, {PackageKit::Daemon::packageName(pkgid)});
+                            res->addPackageId(PackageKit::Transaction::InfoInstalled, pkgid, true);
+                            acquireFetching(false);
+                        }
+                    });
+                    continue;
+                }
+            }
+
+            qDebug() << "no packages for" << component.name();
+            continue;
         }
+        neededPackages += pkgNames;
+
+        addComponent(component, pkgNames);
     }
 
-    PackageKit::Transaction * t = PackageKit::Daemon::getPackages();
-    connect(t, &PackageKit::Transaction::finished, this, &PackageKitBackend::getPackagesFinished);
-    connect(t, &PackageKit::Transaction::package, this, &PackageKitBackend::addPackage);
-    connect(t, &PackageKit::Transaction::errorCode, this, &PackageKitBackend::transactionError);
-    acquireFetching(true);
+    acquireFetching(false);
+    neededPackages.removeDuplicates();
+    resolvePackages(neededPackages);
+}
 
+AppPackageKitResource* PackageKitBackend::addComponent(const AppStream::Component& component, const QStringList& pkgNames)
+{
+    Q_ASSERT(isFetching());
+    Q_ASSERT(!pkgNames.isEmpty());
+
+    const auto res = new AppPackageKitResource(component, pkgNames.at(0), this);
+    m_packages.packages[component.id()] = res;
+    foreach (const QString& pkg, pkgNames) {
+        m_packages.packageToApp[pkg] += component.id();
+    }
+
+    foreach (const QString& pkg, component.extends()) {
+        m_packages.extendedBy[pkg] += res;
+    }
+    return res;
+}
+
+void PackageKitBackend::clearPackages(const QStringList& packageNames)
+{
+    const auto resources = resourcesByPackageNames<QVector<AbstractResource*>>(packageNames);
+    for(auto res: resources) {
+        qobject_cast<PackageKitResource*>(res)->clearPackageIds();
+    }
+}
+
+void PackageKitBackend::resolvePackages(const QStringList &packageNames)
+{
+    PackageKit::Transaction * tArch = PackageKit::Daemon::resolve(packageNames, PackageKit::Transaction::FilterArch);
+    connect(tArch, &PackageKit::Transaction::package, this, &PackageKitBackend::addPackageArch);
+    connect(tArch, &PackageKit::Transaction::errorCode, this, &PackageKitBackend::transactionError);
+
+    PackageKit::Transaction * tNotArch = PackageKit::Daemon::resolve(packageNames, PackageKit::Transaction::FilterNotArch);
+    connect(tNotArch, &PackageKit::Transaction::package, this, &PackageKitBackend::addPackageNotArch);
+    connect(tNotArch, &PackageKit::Transaction::errorCode, this, &PackageKitBackend::transactionError);
+
+    TransactionSet* merge = new TransactionSet({tArch, tNotArch});
+    connect(merge, &TransactionSet::allFinished, this, &PackageKitBackend::getPackagesFinished);
     fetchUpdates();
 }
 
 void PackageKitBackend::fetchUpdates()
 {
-    m_updatesPackageId.clear();
+    if (m_updater->isProgressing())
+        return;
 
     PackageKit::Transaction * tUpdates = PackageKit::Daemon::getUpdates();
     connect(tUpdates, &PackageKit::Transaction::finished, this, &PackageKitBackend::getUpdatesFinished);
     connect(tUpdates, &PackageKit::Transaction::package, this, &PackageKitBackend::addPackageToUpdate);
     connect(tUpdates, &PackageKit::Transaction::errorCode, this, &PackageKitBackend::transactionError);
-    acquireFetching(true);
+    m_updatesPackageId.clear();
+    m_hasSecurityUpdates = false;
+
+    m_updater->setProgressing(true);
 }
 
+void PackageKitBackend::addPackageArch(PackageKit::Transaction::Info info, const QString& packageId, const QString& summary)
+{
+    addPackage(info, packageId, summary, true);
+}
 
-void PackageKitBackend::addPackage(PackageKit::Transaction::Info info, const QString &packageId, const QString &summary)
+void PackageKitBackend::addPackageNotArch(PackageKit::Transaction::Info info, const QString& packageId, const QString& summary)
+{
+    addPackage(info, packageId, summary, false);
+}
+
+void PackageKitBackend::addPackage(PackageKit::Transaction::Info info, const QString &packageId, const QString &summary, bool arch)
 {
     const QString packageName = PackageKit::Daemon::packageName(packageId);
-    QVector<AbstractResource*> r = resourcesByPackageName(packageName, true);
+    QSet<AbstractResource*> r = resourcesByPackageName(packageName);
     if (r.isEmpty()) {
-        r += new PackageKitResource(packageName, summary, this);
-        m_updatingPackages.packages[packageName] = r.last();
+        auto pk = new PackageKitResource(packageName, summary, this);
+        r = { pk };
+        m_packagesToAdd.insert(pk);
     }
     foreach(auto res, r)
-        static_cast<PackageKitResource*>(res)->addPackageId(info, packageId, summary);
+        static_cast<PackageKitResource*>(res)->addPackageId(info, packageId, arch);
 }
 
-void PackageKitBackend::getPackagesFinished(PackageKit::Transaction::Exit exit)
+void PackageKitBackend::getPackagesFinished()
 {
-    Q_ASSERT(m_isFetching);
-
-    if (exit != PackageKit::Transaction::ExitSuccess) {
-        qWarning() << "error while fetching details" << exit;
-    }
-
-    for(auto it = m_updatingPackages.packages.begin(); it != m_updatingPackages.packages.end(); ) {
+    for(auto it = m_packages.packages.cbegin(); it != m_packages.packages.cend(); ++it) {
         auto pkr = qobject_cast<PackageKitResource*>(it.value());
         if (pkr->packages().isEmpty()) {
-            qWarning() << "Failed to find package for" << it.key();
-            it.value()->deleteLater();
-            it = m_updatingPackages.packages.erase(it);
-        } else
-            ++it;
+//             qWarning() << "Failed to find package for" << it.key();
+            m_packagesToDelete += pkr;
+        }
     }
+    includePackagesToAdd();
+}
 
-    m_packages = m_updatingPackages;
+void PackageKitBackend::includePackagesToAdd()
+{
+    if (m_packagesToAdd.isEmpty() && m_packagesToDelete.isEmpty())
+        return;
+
+    acquireFetching(true);
+    foreach(PackageKitResource* res, m_packagesToAdd) {
+        m_packages.packages[res->packageName()] = res;
+    }
+    foreach(PackageKitResource* res, m_packagesToDelete) {
+        const auto pkgs = m_packages.packageToApp.value(res->packageName(), {res->packageName()});
+        foreach(const auto &pkg, pkgs) {
+            auto res = m_packages.packages.take(pkg);
+            if (res) {
+                emit resourceRemoved(res);
+                res->deleteLater();
+            }
+        }
+    }
+    m_packagesToAdd.clear();
+    m_packagesToDelete.clear();
     acquireFetching(false);
 }
 
 void PackageKitBackend::transactionError(PackageKit::Transaction::Error, const QString& message)
 {
     qWarning() << "Transaction error: " << message << sender();
+    Q_EMIT passiveMessage(message);
 }
 
 void PackageKitBackend::packageDetails(const PackageKit::Details& details)
 {
-    QVector<AbstractResource*> resources = resourcesByPackageName(PackageKit::Daemon::packageName(details.packageId()), false);
-    foreach(AbstractResource* res, resources)
+    const QSet<AbstractResource*> resources = resourcesByPackageName(PackageKit::Daemon::packageName(details.packageId()));
+    if (resources.isEmpty())
+        qWarning() << "couldn't find package for" << details.packageId();
+
+    foreach(AbstractResource* res, resources) {
         qobject_cast<PackageKitResource*>(res)->setDetails(details);
+    }
 }
 
-QVector<AbstractResource*> PackageKitBackend::resourcesByPackageName(const QString& name, bool updating) const
+QSet<AbstractResource*> PackageKitBackend::resourcesByPackageName(const QString& name) const
 {
-    const Packages * const f = (updating ? &m_updatingPackages : &m_packages);
-    const QHash<QString, QStringList> *dictionary = &f->packageToApp;
-    const QHash<QString, AbstractResource*> *pkgs = &f->packages;
+    return resourcesByPackageNames<QSet<AbstractResource*>>({name});
+}
 
-    const QStringList names = dictionary->value(name, QStringList(name));
-    QVector<AbstractResource*> ret;
-    ret.reserve(names.size());
-    foreach(const QString& name, names) {
-        AbstractResource* res = pkgs->value(name);
-        if (res)
-            ret += res;
+template <typename T>
+T PackageKitBackend::resourcesByPackageNames(const QStringList &pkgnames) const
+{
+    T ret;
+    ret.reserve(pkgnames.size());
+    for(const QString &name : pkgnames) {
+        const QStringList names = m_packages.packageToApp.value(name, QStringList(name));
+        foreach(const QString& name, names) {
+            AbstractResource* res = m_packages.packages.value(name);
+            if (res)
+                ret += res;
+        }
     }
     return ret;
+}
+
+void PackageKitBackend::checkForUpdates()
+{
+    refreshDatabase();
 }
 
 void PackageKitBackend::refreshDatabase()
 {
     if (!m_refresher) {
+        acquireFetching(true);
         m_refresher = PackageKit::Daemon::refreshCache(false);
-        connect(m_refresher.data(), &PackageKit::Transaction::finished, this, &PackageKitBackend::reloadPackageList);
+        connect(m_refresher.data(), &PackageKit::Transaction::errorCode, this, &PackageKitBackend::transactionError);
+        connect(m_refresher.data(), &PackageKit::Transaction::finished, this, [this]() {
+            reloadPackageList();
+            acquireFetching(false);
+        });
     } else {
         qWarning() << "already resetting";
     }
 }
 
-QVector<AbstractResource*> PackageKitBackend::allResources() const
+ResultsStream* PackageKitBackend::search(const AbstractResourcesBackend::Filters& filter)
 {
-    return m_packages.packages.values().toVector();
+    if (!filter.resourceUrl.isEmpty()) {
+        return findResourceByPackageName(filter.resourceUrl);
+    } else if (!filter.extends.isEmpty()) {
+        const auto ext = kTransform<QVector<AbstractResource*>>(m_packages.extendedBy[filter.extends], [](AppPackageKitResource* a){ return a; });
+        return new ResultsStream(QStringLiteral("PackageKitStream-extends"), ext);
+    } else if (filter.search.isEmpty()) {
+        return new ResultsStream(QStringLiteral("PackageKitStream-all"), kFilter<QVector<AbstractResource*>>(m_packages.packages, [](AbstractResource* res) { return !res->isTechnical(); }));
+    } else {
+        const QList<AppStream::Component> components = m_appdata.search(filter.search);
+        const QStringList ids = kTransform<QStringList>(components, [](const AppStream::Component& comp) { return comp.id(); });
+        auto stream = new ResultsStream(QStringLiteral("PackageKitStream-search"));
+        if (!ids.isEmpty()) {
+            const auto resources = resourcesByPackageNames<QVector<AbstractResource*>>(ids);
+            QTimer::singleShot(0, this, [stream, resources] () {
+                stream->resourcesFound(resources);
+            });
+        }
+
+        PackageKit::Transaction * tArch = PackageKit::Daemon::resolve(filter.search, PackageKit::Transaction::FilterArch);
+        connect(tArch, &PackageKit::Transaction::package, this, &PackageKitBackend::addPackageArch);
+        connect(tArch, &PackageKit::Transaction::package, stream, [stream](PackageKit::Transaction::Info /*info*/, const QString &packageId){
+            stream->setProperty("packageId", packageId);
+        });
+        connect(tArch, &PackageKit::Transaction::finished, stream, [stream, ids, this](PackageKit::Transaction::Exit status) {
+            getPackagesFinished();
+            if (status == PackageKit::Transaction::Exit::ExitSuccess) {
+                const auto packageId = stream->property("packageId");
+                if (!packageId.isNull()) {
+                    const auto res = resourcesByPackageNames<QVector<AbstractResource*>>({PackageKit::Daemon::packageName(packageId.toString())});
+                    stream->resourcesFound(kFilter<QVector<AbstractResource*>>(res, [ids](AbstractResource* res){ return !ids.contains(res->appstreamId()); }));
+                }
+            }
+            stream->finish();
+        }, Qt::QueuedConnection);
+        return stream;
+    }
 }
 
-AbstractResource* PackageKitBackend::resourceByPackageName(const QString& name) const
+ResultsStream * PackageKitBackend::findResourceByPackageName(const QUrl& url)
 {
-    const QStringList ids = m_packages.packageToApp.value(name, QStringList(name));
-    return ids.isEmpty() ? nullptr : m_packages.packages[ids.first()];
-}
-
-QList<AbstractResource*> PackageKitBackend::searchPackageName(const QString& searchText)
-{
-    QList<AbstractResource*> ret;
-    Q_FOREACH (AbstractResource* res, m_packages.packages) {
-        if (res->name().contains(searchText, Qt::CaseInsensitive)) {
-            ret += res;
+    AbstractResource* pkg = nullptr;
+    if (url.host().isEmpty())
+        passiveMessage(i18n("Malformed appstream url '%1'", url.toDisplayString()));
+    else if (url.scheme() == QLatin1String("appstream")) {
+        static const QMap<QString, QString> deprecatedAppstreamIds = {
+            { QStringLiteral("org.kde.krita.desktop"), QStringLiteral("krita.desktop") },
+            { QStringLiteral("org.kde.digikam.desktop"), QStringLiteral("digikam.desktop") },
+            { QStringLiteral("org.kde.ktorrent.desktop"), QStringLiteral("ktorrent.desktop") },
+            { QStringLiteral("org.kde.gcompris.desktop"), QStringLiteral("gcompris.desktop") },
+            { QStringLiteral("org.kde.kmymoney.desktop"), QStringLiteral("kmymoney.desktop") },
+            { QStringLiteral("org.kde.kolourpaint.desktop"), QStringLiteral("kolourpaint.desktop") },
+            { QStringLiteral("org.blender.blender.desktop"), QStringLiteral("blender.desktop") },
+        };
+        
+        const auto host = url.host();
+        if (host.isEmpty())
+            passiveMessage(i18n("Malformed appstream url '%1'", url.toDisplayString()));
+        else {
+            const auto deprecatedHost = deprecatedAppstreamIds.value(url.host()); //try this as fallback
+            for (auto it = m_packages.packages.constBegin(), itEnd = m_packages.packages.constEnd(); it != itEnd; ++it) {
+                if (it.key().compare(host, Qt::CaseInsensitive) == 0 || it.key().compare(deprecatedHost, Qt::CaseInsensitive) == 0) {
+                    pkg = it.value();
+                    break;
+                }
+            }
+            if (!pkg)
+                qWarning() << "could not find" << host << deprecatedHost;
         }
     }
-    return ret;
+    return new ResultsStream(QStringLiteral("PackageKitStream-url"), pkg ? QVector<AbstractResource*>{pkg} : QVector<AbstractResource*>{});
+}
+
+bool PackageKitBackend::hasSecurityUpdates() const
+{
+    return m_hasSecurityUpdates;
 }
 
 int PackageKitBackend::updatesCount() const
@@ -233,33 +421,9 @@ int PackageKitBackend::updatesCount() const
     return m_updatesPackageId.count();
 }
 
-void PackageKitBackend::transactionCanceled(Transaction* t)
+Transaction* PackageKitBackend::installApplication(AbstractResource* app, const AddonList& addons)
 {
-    qDebug() << "Cancel transaction:" << t->resource()->packageName() << "with" << m_transactions.size() << "transactions running";
-    int count = m_transactions.removeAll(t);
-    Q_ASSERT(count==1);
-    Q_UNUSED(count)
-    TransactionModel::global()->cancelTransaction(t);
-}
-
-void PackageKitBackend::removeTransaction(Transaction* t)
-{
-    qDebug() << "Remove transaction:" << t->resource()->packageName() << "with" << m_transactions.size() << "transactions running";
-    int count = m_transactions.removeAll(t);
-    Q_ASSERT(count==1);
-    Q_UNUSED(count)
-    TransactionModel::global()->removeTransaction(t);
-}
-
-void PackageKitBackend::addTransaction(PKTransaction* t)
-{
-    m_transactions.append(t);
-    TransactionModel::global()->addTransaction(t);
-    t->start();
-}
-
-void PackageKitBackend::installApplication(AbstractResource* app, const AddonList& addons)
-{
+    Transaction* t = nullptr;
     if(!addons.addonsToInstall().isEmpty())
     {
         QVector<AbstractResource*> appsToInstall;
@@ -271,77 +435,71 @@ void PackageKitBackend::installApplication(AbstractResource* app, const AddonLis
             appsToInstall += m_packages.packages.value(toInstall);
             Q_ASSERT(appsToInstall.last());
         }
-        addTransaction(new PKTransaction(appsToInstall, Transaction::ChangeAddonsRole));
+        t = new PKTransaction(appsToInstall, Transaction::ChangeAddonsRole);
     }
 
     if (!addons.addonsToRemove().isEmpty()) {
-        QVector<AbstractResource*> appsToRemove;
-        foreach(const QString& toRemove, addons.addonsToRemove()) {
-            appsToRemove += m_packages.packages.value(toRemove);
-        }
-        addTransaction(new PKTransaction(appsToRemove, Transaction::RemoveRole));
+        QVector<AbstractResource*> appsToRemove = kTransform<QVector<AbstractResource*>>(addons.addonsToRemove(), [this](const QString& toRemove){ return m_packages.packages.value(toRemove); });
+        t = new PKTransaction(appsToRemove, Transaction::RemoveRole);
     }
+
+    if (!app->isInstalled())
+        t = installApplication(app);
+
+    return t;
 }
 
-void PackageKitBackend::installApplication(AbstractResource* app)
+Transaction* PackageKitBackend::installApplication(AbstractResource* app)
 {
-    addTransaction(new PKTransaction({app}, Transaction::InstallRole));
+    return new PKTransaction({app}, Transaction::InstallRole);
 }
 
-void PackageKitBackend::cancelTransaction(AbstractResource* app)
-{
-    Q_FOREACH (Transaction* t, m_transactions) {
-        PKTransaction* pkt = qobject_cast<PKTransaction*>(t);
-        if (pkt->resource() == app) {
-            if (pkt->transaction()->allowCancel()) {
-                pkt->transaction()->cancel();
-            } else {
-                qWarning() << "trying to cancel a non-cancellable transaction: " << app->name();
-            }
-            break;
-        }
-    }
-}
-
-void PackageKitBackend::removeApplication(AbstractResource* app)
+Transaction* PackageKitBackend::removeApplication(AbstractResource* app)
 {
     Q_ASSERT(!isFetching());
-    addTransaction(new PKTransaction({app}, Transaction::RemoveRole));
+    return new PKTransaction({app}, Transaction::RemoveRole);
 }
 
-QList<AbstractResource*> PackageKitBackend::upgradeablePackages() const
+QSet<AbstractResource*> PackageKitBackend::upgradeablePackages() const
 {
-    QVector<AbstractResource*> ret;
+    QSet<AbstractResource*> ret;
+    ret.reserve(m_updatesPackageId.size());
     Q_FOREACH (const QString& pkgid, m_updatesPackageId) {
         const QString pkgname = PackageKit::Daemon::packageName(pkgid);
-        const auto pkgs = resourcesByPackageName(pkgname, false);
+        const auto pkgs = resourcesByPackageName(pkgname);
         if (pkgs.isEmpty()) {
             qWarning() << "couldn't find resource for" << pkgid;
         }
-        ret += pkgs;
+        ret.unite(pkgs);
     }
-    return ret.toList();
+    return ret;
 }
 
 void PackageKitBackend::addPackageToUpdate(PackageKit::Transaction::Info info, const QString& packageId, const QString& summary)
 {
-    if (info != PackageKit::Transaction::InfoBlocked) {
-        m_updatesPackageId += packageId;
-        addPackage(info, packageId, summary);
+    if (info == PackageKit::Transaction::InfoBlocked) {
+        return;
     }
+
+    if (info == PackageKit::Transaction::InfoSecurity)
+        m_hasSecurityUpdates = true;
+
+    m_updatesPackageId += packageId;
+    addPackage(info, packageId, summary, true);
 }
 
 void PackageKitBackend::getUpdatesFinished(PackageKit::Transaction::Exit, uint)
 {
     if (!m_updatesPackageId.isEmpty()) {
-        acquireFetching(true);
         PackageKit::Transaction* transaction = PackageKit::Daemon::getDetails(m_updatesPackageId.toList());
         connect(transaction, &PackageKit::Transaction::details, this, &PackageKitBackend::packageDetails);
         connect(transaction, &PackageKit::Transaction::errorCode, this, &PackageKitBackend::transactionError);
         connect(transaction, &PackageKit::Transaction::finished, this, &PackageKitBackend::getUpdatesDetailsFinished);
     }
 
-    acquireFetching(false);
+    m_updater->setProgressing(false);
+
+    includePackagesToAdd();
     emit updatesCountChanged();
 }
 
@@ -350,7 +508,6 @@ void PackageKitBackend::getUpdatesDetailsFinished(PackageKit::Transaction::Exit 
     if (exit != PackageKit::Transaction::ExitSuccess) {
         qWarning() << "Couldn't figure out the updates on PackageKit backend" << exit;
     }
-    acquireFetching(false);
 }
 
 bool PackageKitBackend::isPackageNameUpgradeable(const PackageKitResource* res) const
@@ -361,11 +518,48 @@ bool PackageKitBackend::isPackageNameUpgradeable(const PackageKitResource* res) 
 QString PackageKitBackend::upgradeablePackageId(const PackageKitResource* res) const
 {
     QString name = res->packageName();
-    for (const QString& pkgid: m_updatesPackageId) {
+    foreach (const QString& pkgid, m_updatesPackageId) {
         if (PackageKit::Daemon::packageName(pkgid) == name)
             return pkgid;
     }
     return QString();
+}
+
+void PackageKitBackend::fetchDetails(const QString& pkgid)
+{
+    if (!m_delayedDetailsFetch.isActive()) {
+        m_delayedDetailsFetch.start();
+    }
+
+    m_packageNamesToFetchDetails += pkgid;
+}
+
+void PackageKitBackend::performDetailsFetch()
+{
+    Q_ASSERT(!m_packageNamesToFetchDetails.isEmpty());
+    const auto ids = m_packageNamesToFetchDetails.toList();
+
+    PackageKit::Transaction* transaction = PackageKit::Daemon::getDetails(ids);
+    connect(transaction, &PackageKit::Transaction::details, this, &PackageKitBackend::packageDetails);
+    connect(transaction, &PackageKit::Transaction::errorCode, this, &PackageKitBackend::transactionError);
+
+    QSharedPointer<QMap<QString, int>> packageDependencies(new QMap<QString, int>);
+    auto trans = PackageKit::Daemon::installPackages(ids, PackageKit::Transaction::TransactionFlagSimulate);
+    connect(trans, &PackageKit::Transaction::errorCode, this, &PackageKitBackend::transactionError);
+    connect(trans, &PackageKit::Transaction::package, this, [packageDependencies](PackageKit::Transaction::Info /*info*/, const QString &packageID, const QString &/*summary*/) {
+        (*packageDependencies)[packageID] += 1;
+    });
+    connect(trans, &PackageKit::Transaction::finished, this, [this, packageDependencies](PackageKit::Transaction::Exit /*status*/) {
+        auto pkgDeps = (*packageDependencies);
+
+        for (auto it = pkgDeps.constBegin(), itEnd = pkgDeps.constEnd(); it != itEnd; ++it) {
+            const auto resources = resourcesByPackageName(PackageKit::Daemon::packageName(it.key()));
+            for(auto resource : resources) {
+                auto pkres = qobject_cast<PackageKitResource*>(resource);
+                pkres->setDependenciesCount(it.value());
+            }
+        }
+    });
 }
 
 void PackageKitBackend::checkDaemonRunning()
@@ -380,17 +574,65 @@ AbstractBackendUpdater* PackageKitBackend::backendUpdater() const
     return m_updater;
 }
 
-QList<QAction*> PackageKitBackend::messageActions() const
-{
-    return m_messageActions;
-}
-
 QVector<AppPackageKitResource*> PackageKitBackend::extendedBy(const QString& id) const
 {
     return m_packages.extendedBy[id];
 }
 
-//TODO
-AbstractReviewsBackend* PackageKitBackend::reviewsBackend() const { return nullptr; }
+AbstractReviewsBackend* PackageKitBackend::reviewsBackend() const
+{
+    return m_reviews.data();
+}
+
+AbstractResource * PackageKitBackend::resourceForFile(const QUrl& file)
+{
+    QMimeDatabase db;
+    const auto mime = db.mimeTypeForUrl(file);
+    if (    mime.inherits(QLatin1String("application/vnd.debian.binary-package"))
+         || mime.inherits(QLatin1String("application/x-rpm"))
+         || mime.inherits(QLatin1String("application/x-tar"))
+         || mime.inherits(QLatin1String("application/x-xz-compressed-tar"))
+    ) {
+        return new LocalFilePKResource(file, this);
+    }
+    return nullptr;
+}
+
+static QString readDistroName()
+{
+    const QStringList osreleasenames = (QStringList() << QStringLiteral("/etc/os-release")
+                                                      << QStringLiteral("/usr/lib/os-release"));
+    foreach (QString osrelease, osreleasenames)
+    {
+        QFile file(osrelease);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text))
+        {
+            QByteArray line;
+            while (!file.atEnd()) {
+                line = file.readLine().trimmed();
+                if (line.startsWith("NAME=")) {
+                    auto output = line.right(line.length()-5);
+                    output = output.replace('\"',"");
+                    return QString::fromLocal8Bit(output);
+                }
+            }
+        }
+    }
+
+    QProcess process;
+    process.setEnvironment({QStringLiteral("LC_ALL=C")});
+    process.start(QStringLiteral("lsb_release"), {QStringLiteral("-sd")});
+    process.waitForFinished();
+    auto output = process.readAll().trimmed();
+    if (output.startsWith('\"') && output.endsWith('\"'))
+        output = output.mid(1, output.length()-2);
+    return QString::fromLocal8Bit(output);
+}
+
+QString PackageKitBackend::displayName() const
+{
+    static const QString distro = readDistroName();
+    return distro;
+}
 
 #include "PackageKitBackend.moc"

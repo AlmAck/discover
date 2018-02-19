@@ -25,16 +25,31 @@
 #include <QtCore/QPair>
 #include <QtCore/QVector>
 
+#include "AbstractResource.h"
 #include "Transaction/AddonList.h"
 
 #include "discovercommon_export.h"
 
-class QAction;
 class Transaction;
+class Category;
 class AbstractReviewsBackend;
-class AbstractResource;
 class AbstractBackendUpdater;
-class KActionCollection;
+
+class DISCOVERCOMMON_EXPORT ResultsStream : public QObject
+{
+    Q_OBJECT
+    public:
+        ResultsStream(const QString &objectName);
+
+        /// assumes all the information is in @p resources
+        ResultsStream(const QString &objectName, const QVector<AbstractResource*>& resources);
+        ~ResultsStream() override;
+
+        void finish();
+
+    Q_SIGNALS:
+        void resourcesFound(const QVector<AbstractResource*>& resources);
+};
 
 /**
  * \class AbstractResourcesBackend  AbstractResourcesBackend.h "AbstractResourcesBackend.h"
@@ -57,9 +72,12 @@ class DISCOVERCOMMON_EXPORT AbstractResourcesBackend : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QString name READ name CONSTANT)
+    Q_PROPERTY(QString displayName READ displayName CONSTANT)
     Q_PROPERTY(AbstractReviewsBackend* reviewsBackend READ reviewsBackend CONSTANT)
     Q_PROPERTY(int updatesCount READ updatesCount NOTIFY updatesCountChanged)
+    Q_PROPERTY(bool hasSecurityUpdates READ hasSecurityUpdates NOTIFY updatesCountChanged)
     Q_PROPERTY(bool isFetching READ isFetching NOTIFY fetchingChanged)
+    Q_PROPERTY(bool hasApplications READ hasApplications CONSTANT)
     public:
         /**
          * Constructs an AbstractResourcesBackend
@@ -73,17 +91,29 @@ class DISCOVERCOMMON_EXPORT AbstractResourcesBackend : public QObject
          */
         virtual bool isValid() const = 0;
         
+        struct Filters {
+            Category* category = nullptr;
+            AbstractResource::State state = AbstractResource::Broken;
+            QString mimetype;
+            QString search;
+            QString extends;
+            QUrl resourceUrl;
+            QString origin;
+            bool allBackends = false;
+
+            bool isEmpty() const { return !category && state == AbstractResource::Broken && mimetype.isEmpty() && search.isEmpty() && extends.isEmpty() && resourceUrl.isEmpty() && origin.isEmpty(); }
+
+            bool shouldFilter(AbstractResource* res) const;
+            void filterJustInCase(QVector<AbstractResource*>& input) const;
+        };
+
         /**
-         * @returns all resources of the backend
+         * @returns a stream that will provide elements that match the search
          */
-        virtual QVector<AbstractResource*> allResources() const = 0;
-        
-        /**
-         * In this method the backend should search in each resources name if it complies
-         * to the searchText and return those AbstractResources.
-         * @returns the list of resources whose name contains searchText
-         */
-        virtual QList<AbstractResource*> searchPackageName(const QString &searchText) = 0;//FIXME: Probably provide a standard implementation?!
+
+        virtual ResultsStream* search(const Filters &search) = 0;//FIXME: Probably provide a standard implementation?!
+
+        virtual ResultsStream* findResourceByPackageName(const QUrl &search) = 0;//FIXME: Probably provide a standard implementation?!
         
         /**
          * @returns the reviews backend of this AbstractResourcesBackend (which handles all ratings and reviews of resources)
@@ -100,25 +130,11 @@ class DISCOVERCOMMON_EXPORT AbstractResourcesBackend : public QObject
          * @returns the number of resources for which an update is available, it should only count technical packages
          */
         virtual int updatesCount() const = 0;//FIXME: Probably provide a standard implementation?!
-        
+
         /**
-         * Gets a resource identified by the name
-         * @param name the name to search for
-         * @returns the resource with the provided name
+         * @returns whether either of the updates contains a security fix
          */
-        virtual AbstractResource* resourceByPackageName(const QString& name) const = 0;//FIXME: Even this could get a standard impl
-        
-        /**
-         * @returns all resources for which an update is available
-         */
-        virtual QList<AbstractResource*> upgradeablePackages() const = 0;//FIXME: Do a standard impl as well
-        
-        /**
-         * This method gets called while initializing the GUI, in case the backend needs to
-         * integrate actions in the action collection.
-         * @param w the KActionCollection the backend should integrate to
-         */
-        virtual void integrateActions(KActionCollection* w);
+        virtual bool hasSecurityUpdates() const { return false; }
 
         /**
          * Tells whether the backend is fetching resources
@@ -126,18 +142,9 @@ class DISCOVERCOMMON_EXPORT AbstractResourcesBackend : public QObject
         virtual bool isFetching() const = 0;
 
         /**
-         * Receives a path with the plugin's desktop file
+         * @returns the appstream ids that this backend extends
          */
-        virtual void setMetaData(const QString& path);
-
-        /**
-         *  This method is used to integrate advanced functions into the Muon GUI.
-         *
-         *  In plasma-discover-updater, actions with HighPriority will be shown in a KMessageWidget,
-         *  normal priority will go right on top of the more menu, low priority will go
-         *  to the advanced menu.
-         */
-        virtual QList<QAction*> messageActions() const = 0;
+        virtual QStringList extends() const;
 
         /** @returns the plugin's name */
         QString name() const;
@@ -145,44 +152,53 @@ class DISCOVERCOMMON_EXPORT AbstractResourcesBackend : public QObject
         /** @internal only to be used by the factory */
         void setName(const QString& name);
 
+        virtual QString displayName() const = 0;
+
+        /**
+         * emits a change for all rating properties
+         */
+        void emitRatingsReady();
+
+        virtual AbstractResource* resourceForFile(const QUrl &/*url*/) { return nullptr; }
+
+        /**
+         * @returns the root category tree
+         */
+        virtual QVector<Category*> category() const { return {}; }
+
+        virtual bool hasApplications() const { return false; }
+
     public Q_SLOTS:
         /**
          * This gets called when the backend should install an application.
-         * The AbstractResourcesBackend should create a Transaction object, which
-         * will provide Muon with information like the status and progress of a transaction,
-         * and add it to the TransactionModel with the following line:
-         * \code
-         * TransactionModel::global()->addTransaction(transaction);
-         * \endcode
-         * where transaction is the newly created Transaction.
+         * The AbstractResourcesBackend should create a Transaction object, is returned and
+         * will be included in the TransactionModel
          * @param app the application to be installed
          * @param addons the addons which should be installed with the application
+         * @returns the Transaction that keeps track of the installation process
          */
-        virtual void installApplication(AbstractResource *app, const AddonList& addons) = 0;
+        virtual Transaction* installApplication(AbstractResource *app, const AddonList& addons) = 0;
         
         /**
          * Overloaded function, which simply does the same, except not installing any addons.
          */
-        virtual void installApplication(AbstractResource *app);
+        virtual Transaction* installApplication(AbstractResource *app);
         
         /**
          * This gets called when the backend should remove an application.
-         * Like in the installApplication() method, the AbstractResourcesBackend should
-         * create a Transaction object and add it to the TransactionModel.
+         * Like in the installApplication() method, we'll return the Transaction
+         * responsible for the removal.
+         *
          * @see installApplication
          * @param app the application to be removed
+         * @returns the Transaction that keeps track of the removal process
          */
-        virtual void removeApplication(AbstractResource *app) = 0;
-        
+        virtual Transaction* removeApplication(AbstractResource *app) = 0;
+
         /**
-         * This gets called when a transaction should get canceled and thus the backend
-         * should cancel the transaction and remove it from the TransactionModel:
-         * \code
-         * TransactionModel::global()->removeTransaction(t);
-         * \endcode
-         * @param app the application whose transaction is going to be canceled
+         * Notifies the backend that the user wants the information to be up to date
          */
-        virtual void cancelTransaction(AbstractResource *app) = 0;
+        virtual void checkForUpdates() = 0;
 
     Q_SIGNALS:
         /**
@@ -198,17 +214,21 @@ class DISCOVERCOMMON_EXPORT AbstractResourcesBackend : public QObject
          * This should be emitted when all data of the backends resources changed. Internally it will emit
          * a signal in the model to show the view that all data of a certain backend changed.
          */
-        void allDataChanged();
+        void allDataChanged(const QVector<QByteArray> &propertyNames);
+
         /**
-         * This should be emitted whenever there are new search results available, other than the ones returned previously,
-         * or the data set in which the backend searched changed.
+         * Allows to notify some @p properties in @p resource have changed
          */
-        void searchInvalidated();
+        void resourcesChanged(AbstractResource* resource, const QVector<QByteArray> &properties);
+        void resourceRemoved(AbstractResource* resource);
+
+        void passiveMessage(const QString &message);
 
     private:
         QString m_name;
 };
 
+DISCOVERCOMMON_EXPORT QDebug operator<<(QDebug dbg, const AbstractResourcesBackend::Filters& filters);
 
 /**
  * @internal Workaround because QPluginLoader enforces 1 instance per plugin
@@ -217,16 +237,20 @@ class DISCOVERCOMMON_EXPORT AbstractResourcesBackendFactory : public QObject
 {
     Q_OBJECT
 public:
-    virtual AbstractResourcesBackend* newInstance(QObject* parent) const = 0;
+    virtual QVector<AbstractResourcesBackend*> newInstance(QObject* parent, const QString &name) const = 0;
 };
 
-#define MUON_BACKEND_PLUGIN(ClassName)\
+#define DISCOVER_BACKEND_PLUGIN(ClassName)\
     class ClassName##Factory : public AbstractResourcesBackendFactory {\
         Q_OBJECT\
         Q_PLUGIN_METADATA(IID "org.kde.muon.AbstractResourcesBackendFactory")\
         Q_INTERFACES(AbstractResourcesBackendFactory)\
         public:\
-            virtual AbstractResourcesBackend* newInstance(QObject* parent) const override { return new ClassName(parent); }\
+            QVector<AbstractResourcesBackend*> newInstance(QObject* parent, const QString &name) const override {\
+                auto c = new ClassName(parent);\
+                c->setName(name);\
+                return {c};\
+            }\
     };
 
 Q_DECLARE_INTERFACE( AbstractResourcesBackendFactory, "org.kde.muon.AbstractResourcesBackendFactory" )

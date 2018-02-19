@@ -21,32 +21,52 @@
 #include "DummyTransaction.h"
 #include "DummyBackend.h"
 #include "DummyResource.h"
-#include <Transaction/TransactionModel.h>
 #include <QTimer>
 #include <QDebug>
 #include <KRandom>
 
-DummyTransaction::DummyTransaction(DummyResource* app, Role action)
-    : Transaction(app->backend(), app, action)
-    , m_app(app)
+// #define TEST_PROCEED
+
+DummyTransaction::DummyTransaction(DummyResource* app, Role role)
+    : DummyTransaction(app, {}, role)
 {
-    iterateTransaction();
 }
 
 DummyTransaction::DummyTransaction(DummyResource* app, const AddonList& addons, Transaction::Role role)
     : Transaction(app->backend(), app, role, addons)
     , m_app(app)
 {
+    setCancellable(true);
     iterateTransaction();
 }
 
 void DummyTransaction::iterateTransaction()
 {
+    if (!m_iterate)
+        return;
+
+    setStatus(CommittingStatus);
     if(progress()<100) {
         setProgress(qBound(0, progress()+(KRandom::random()%30), 100));
-        QTimer::singleShot(/*KRandom::random()%*/200, this, &DummyTransaction::iterateTransaction);
+        QTimer::singleShot(/*KRandom::random()%*/100, this, &DummyTransaction::iterateTransaction);
     } else
+#ifdef TEST_PROCEED
+        Q_EMIT proceedRequest(QStringLiteral("yadda yadda"), QStringLiteral("Biii BOooo<ul><li>A</li><li>A</li><li>A</li><li>A</li></ul>"));
+#else
         finishTransaction();
+#endif
+}
+
+void DummyTransaction::proceed()
+{
+    finishTransaction();
+}
+
+void DummyTransaction::cancel()
+{
+    m_iterate = false;
+
+    setStatus(CancelledStatus);
 }
 
 void DummyTransaction::finishTransaction()
@@ -61,8 +81,8 @@ void DummyTransaction::finishTransaction()
         newState = AbstractResource::None;
         break;
     }
-    m_app->setState(newState);
     m_app->setAddons(addons());
-    TransactionModel::global()->removeTransaction(this);
+    m_app->setState(newState);
+    setStatus(DoneStatus);
     deleteLater();
 }

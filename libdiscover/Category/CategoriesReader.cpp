@@ -23,23 +23,31 @@
 #include <QDomNode>
 #include <QFile>
 #include <QDebug>
-#include <qstandardpaths.h>
+#include <QStandardPaths>
 
 #include <DiscoverBackendsFactory.h>
 #include <resources/AbstractResourcesBackend.h>
 
-QList<Category*> CategoriesReader::loadCategoriesFile(const QString& name)
+QVector<Category*> CategoriesReader::loadCategoriesFile(AbstractResourcesBackend* backend)
 {
-    QList<Category *> ret;
-    QString path = QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("libdiscover/categories/")+name+QStringLiteral("-categories.xml"));
+    QString path = QStandardPaths::locate(QStandardPaths::GenericDataLocation, QStringLiteral("libdiscover/categories/")+backend->name()+QStringLiteral("-categories.xml"));
     if (path.isEmpty()) {
-        qWarning() << "Couldn't find a category for " << name;
-        return ret;
-    }
+        auto cat = backend->category();
+        if (cat.isEmpty())
+            qWarning() << "Couldn't find a category for " << backend->name();
 
+        Category::sortCategories(cat);
+        return cat;
+    }
+    return loadCategoriesPath(path);
+}
+
+QVector<Category*> CategoriesReader::loadCategoriesPath(const QString& path)
+{
+    QVector<Category *> ret;
     QFile menuFile(path);
     if (!menuFile.open(QIODevice::ReadOnly)) {
-        // Broken install or broken FS
+        qWarning() << "couldn't open" << path;
         return ret;
     }
 
@@ -57,35 +65,11 @@ QList<Category*> CategoriesReader::loadCategoriesFile(const QString& name)
     {
         if (node.nodeType() == QDomNode::ElementNode) {
             ret << new Category( {path} );
-            ret.last()->parseData(path, node, true);
+            ret.last()->parseData(path, node);
         }
 
         node = node.nextSibling();
     }
-    return ret;
-}
-
-static bool categoryLessThan(Category *c1, const Category *c2)
-{
-    return (QString::localeAwareCompare(c1->name(), c2->name()) < 0);
-}
-
-QList<Category*> CategoriesReader::populateCategories()
-{
-    DiscoverBackendsFactory f;
-    QStringList backendNames = f.allBackendNames();
-
-    QList<Category*> ret;
-    Q_FOREACH (const QString& name, backendNames) {
-        QList<Category*> cats = loadCategoriesFile(name);
-
-        if(ret.isEmpty()) {
-            ret += cats;
-        } else {
-            Q_FOREACH (Category* c, cats)
-                Category::addSubcategory(ret, c);
-        }
-    }
-    qSort(ret.begin(), ret.end(), categoryLessThan);
+    Category::sortCategories(ret);
     return ret;
 }

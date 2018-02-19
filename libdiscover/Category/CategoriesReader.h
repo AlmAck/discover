@@ -20,16 +20,17 @@
 
 #ifndef CATEGORIESREADER_H
 #define CATEGORIESREADER_H
-#include <QList>
+
+#include <QVector>
+#include "discovercommon_export.h"
 
 class Category;
-class CategoriesReader
+class AbstractResourcesBackend;
+class DISCOVERCOMMON_EXPORT CategoriesReader
 {
     public:
-        QList<Category*> populateCategories();
-
-    private:
-        QList<Category*> loadCategoriesFile(const QString& path);
+        QVector<Category*> loadCategoriesPath(const QString& path);
+        QVector<Category*> loadCategoriesFile(AbstractResourcesBackend* backend);
 };
 
 #endif // CATEGORIESREADER_H

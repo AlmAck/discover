@@ -1,0 +1,7 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+ <qresource>
+    <file>banners/banner.svg</file>
+    <file>banners/coffee.jpg</file>
+ </qresource>
+</RCC>

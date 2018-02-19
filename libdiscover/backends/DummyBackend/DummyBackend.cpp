@@ -26,7 +26,6 @@
 #include <resources/StandardBackendUpdater.h>
 #include <resources/SourcesModel.h>
 #include <Transaction/Transaction.h>
-#include <Transaction/TransactionModel.h>
 
 #include <KAboutData>
 #include <KLocalizedString>
@@ -38,72 +37,43 @@
 #include <QTimer>
 #include <QAction>
 
-MUON_BACKEND_PLUGIN(DummyBackend)
+DISCOVER_BACKEND_PLUGIN(DummyBackend)
 
 DummyBackend::DummyBackend(QObject* parent)
     : AbstractResourcesBackend(parent)
     , m_updater(new StandardBackendUpdater(this))
     , m_reviews(new DummyReviewsBackend(this))
     , m_fetching(true)
-    , m_startElements(320)
+    , m_startElements(120)
 {
     QTimer::singleShot(500, this, &DummyBackend::toggleFetching);
-    connect(m_reviews, &DummyReviewsBackend::ratingsReady, this, &DummyBackend::allDataChanged);
-}
+    connect(m_reviews, &DummyReviewsBackend::ratingsReady, this, &AbstractResourcesBackend::emitRatingsReady);
+    connect(m_updater, &StandardBackendUpdater::updatesCountChanged, this, &DummyBackend::updatesCountChanged);
 
-void DummyBackend::setMetaData(const QString& path)
-{
-    Q_ASSERT(!path.isEmpty());
-    KSharedConfig::Ptr cfg = KSharedConfig::openConfig(path);
-    KConfigGroup metadata = cfg->group(QStringLiteral("Desktop Entry"));
-
-    populate(metadata.readEntry("Name", QString()));
+    populate(QStringLiteral("Dummy"));
     if (!m_fetching)
         m_reviews->initialize();
-
-    QAction* updateAction = new QAction(this);
-    updateAction->setIcon(QIcon::fromTheme(QStringLiteral("system-software-update")));
-    updateAction->setText(i18nc("@action Checks the Internet for updates", "Check for Updates"));
-    updateAction->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_R));
-    connect(updateAction, &QAction::triggered, this, &DummyBackend::checkForUpdates);
-
-    QAction* randomAction = new QAction(this);
-    randomAction->setIcon(QIcon::fromTheme(QStringLiteral("kalarm")));
-    randomAction->setText(QStringLiteral("test bla bla"));
-    randomAction->setShortcut(QKeySequence(Qt::CTRL + Qt::SHIFT + Qt::Key_T));
-    randomAction->setPriority(QAction::LowPriority);
-    connect(randomAction, &QAction::triggered, this, [](){ qDebug() << "random action triggered"; });
-
-//     QAction* importantAction = new QAction(this);
-//     importantAction->setIcon(QIcon::fromTheme(QStringLiteral("kalarm"));
-//     importantAction->setText(QStringLiteral("Amaze!"));
-//     importantAction->setWhatsThis(QStringLiteral("Wo Wo I'm so important"));
-//     importantAction->setPriority(QAction::HighPriority);
-//     connect(importantAction, &QAction::triggered, this, [importantAction](){
-//         importantAction->setEnabled(false);
-//         qDebug() << "important action triggered";
-//     });
-
-    m_messageActions = QList<QAction*>() << updateAction << randomAction /*<< importantAction*/;
 
     SourcesModel::global()->addSourcesBackend(new DummySourcesBackend(this));
 }
 
 void DummyBackend::populate(const QString& n)
 {
-    int start = m_resources.count();
+    const int start = m_resources.count();
     for(int i=start; i<start+m_startElements; i++) {
-        QString name = n+QLatin1Char(' ')+QString::number(i);
+        const QString name = n+QLatin1Char(' ')+QString::number(i);
         DummyResource* res = new DummyResource(name, false, this);
+        res->setSize(100+(m_startElements-i));
         res->setState(AbstractResource::State(1+(i%3)));
-        m_resources.insert(name, res);
+        m_resources.insert(name.toLower(), res);
         connect(res, &DummyResource::stateChanged, this, &DummyBackend::updatesCountChanged);
     }
 
     for(int i=start; i<start+m_startElements; i++) {
-        QString name = QStringLiteral("techie")+QString::number(i);
+        const QString name = QStringLiteral("techie")+QString::number(i);
         DummyResource* res = new DummyResource(name, true, this);
         res->setState(AbstractResource::State(1+(i%3)));
+        res->setSize(300+(m_startElements-i));
         m_resources.insert(name, res);
         connect(res, &DummyResource::stateChanged, this, &DummyBackend::updatesCountChanged);
     }
@@ -118,45 +88,30 @@ void DummyBackend::toggleFetching()
         m_reviews->initialize();
 }
 
-QVector<AbstractResource*> DummyBackend::allResources() const
-{
-    Q_ASSERT(!m_fetching);
-    QVector<AbstractResource*> ret;
-    ret.reserve(m_resources.size());
-    foreach(AbstractResource* res, m_resources) {
-        ret += res;
-    }
-    return ret;
-}
-
 int DummyBackend::updatesCount() const
 {
-    return upgradeablePackages().count();
+    return m_updater->updatesCount();
 }
 
-QList<AbstractResource*> DummyBackend::upgradeablePackages() const
+ResultsStream* DummyBackend::search(const AbstractResourcesBackend::Filters& filter)
 {
-    QList<AbstractResource*> updates;
-    foreach(AbstractResource* res, m_resources) {
-        if(res->state()==AbstractResource::Upgradeable)
-            updates += res;
-    }
-    return updates;
-}
-
-AbstractResource* DummyBackend::resourceByPackageName(const QString& name) const
-{
-    return m_resources.value(name);
-}
-
-QList<AbstractResource*> DummyBackend::searchPackageName(const QString& searchText)
-{
-    QList<AbstractResource*> ret;
-    foreach(AbstractResource* r, m_resources) {
-        if(r->name().contains(searchText, Qt::CaseInsensitive) || r->comment().contains(searchText, Qt::CaseInsensitive))
+    QVector<AbstractResource*> ret;
+    if (!filter.resourceUrl.isEmpty() && filter.resourceUrl.scheme() == QLatin1String("dummy"))
+        return findResourceByPackageName(filter.resourceUrl);
+    else foreach(AbstractResource* r, m_resources) {
+        if(r->name().contains(filter.search, Qt::CaseInsensitive) || r->comment().contains(filter.search, Qt::CaseInsensitive))
             ret += r;
     }
-    return ret;
+    return new ResultsStream(QStringLiteral("DummyStream"), ret);
+}
+
+ResultsStream * DummyBackend::findResourceByPackageName(const QUrl& search)
+{
+    auto res = search.scheme() == QLatin1String("dummy") ? m_resources.value(search.host().replace(QLatin1Char('.'), QLatin1Char(' '))) : nullptr;
+    if (!res) {
+        return new ResultsStream(QStringLiteral("DummyStream"), {});
+    } else
+        return new ResultsStream(QStringLiteral("DummyStream"), { res });
 }
 
 AbstractBackendUpdater* DummyBackend::backendUpdater() const
@@ -169,26 +124,20 @@ AbstractReviewsBackend* DummyBackend::reviewsBackend() const
     return m_reviews;
 }
 
-void DummyBackend::installApplication(AbstractResource* app, const AddonList& addons)
+Transaction* DummyBackend::installApplication(AbstractResource* app, const AddonList& addons)
 {
-    TransactionModel *transModel = TransactionModel::global();
-    transModel->addTransaction(new DummyTransaction(qobject_cast<DummyResource*>(app), addons, Transaction::InstallRole));
+    return new DummyTransaction(qobject_cast<DummyResource*>(app), addons, Transaction::InstallRole);
 }
 
-void DummyBackend::installApplication(AbstractResource* app)
+Transaction* DummyBackend::installApplication(AbstractResource* app)
 {
-	TransactionModel *transModel = TransactionModel::global();
-	transModel->addTransaction(new DummyTransaction(qobject_cast<DummyResource*>(app), Transaction::InstallRole));
+	return new DummyTransaction(qobject_cast<DummyResource*>(app), Transaction::InstallRole);
 }
 
-void DummyBackend::removeApplication(AbstractResource* app)
+Transaction* DummyBackend::removeApplication(AbstractResource* app)
 {
-	TransactionModel *transModel = TransactionModel::global();
-	transModel->addTransaction(new DummyTransaction(qobject_cast<DummyResource*>(app), Transaction::RemoveRole));
+	return new DummyTransaction(qobject_cast<DummyResource*>(app), Transaction::RemoveRole);
 }
-
-void DummyBackend::cancelTransaction(AbstractResource*)
-{}
 
 void DummyBackend::checkForUpdates()
 {
@@ -197,6 +146,22 @@ void DummyBackend::checkForUpdates()
     toggleFetching();
     populate(QStringLiteral("Moar"));
     QTimer::singleShot(500, this, &DummyBackend::toggleFetching);
+    qDebug() << "DummyBackend::checkForUpdates";
+}
+
+AbstractResource * DummyBackend::resourceForFile(const QUrl& path)
+{
+    DummyResource* res = new DummyResource(path.fileName(), true, this);
+    res->setSize(666);
+    res->setState(AbstractResource::None);
+    m_resources.insert(res->packageName(), res);
+    connect(res, &DummyResource::stateChanged, this, &DummyBackend::updatesCountChanged);
+    return res;
+}
+
+QString DummyBackend::displayName() const
+{
+    return QStringLiteral("Dummy");
 }
 
 #include "DummyBackend.moc"

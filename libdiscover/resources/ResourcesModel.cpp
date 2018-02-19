@@ -22,18 +22,22 @@
 
 #include "AbstractResource.h"
 #include "resources/AbstractResourcesBackend.h"
+#include "resources/AbstractBackendUpdater.h"
 #include <ReviewsBackend/Rating.h>
 #include <ReviewsBackend/AbstractReviewsBackend.h>
 #include <Transaction/Transaction.h>
 #include <DiscoverBackendsFactory.h>
-#include <KActionCollection>
 #include "Transaction/TransactionModel.h"
 #include "Category/CategoryModel.h"
+#include "utils.h"
 #include <QDebug>
 #include <QCoreApplication>
 #include <QThread>
 #include <QAction>
 #include <QMetaProperty>
+#include <KLocalizedString>
+#include <KSharedConfig>
+#include <KConfigGroup>
 
 ResourcesModel *ResourcesModel::s_self = nullptr;
 
@@ -45,33 +49,14 @@ ResourcesModel *ResourcesModel::global()
 }
 
 ResourcesModel::ResourcesModel(QObject* parent, bool load)
-    : QAbstractListModel(parent)
+    : QObject(parent)
+    , m_isFetching(false)
     , m_initializingBackends(0)
-    , m_actionCollection(nullptr)
-    , m_roles(QAbstractItemModel::roleNames().unite({
-        { NameRole, "name" },
-        { IconRole, "icon" },
-        { CommentRole, "comment" },
-        { StateRole, "state" },
-        { RatingRole, "rating" },
-        { RatingPointsRole, "ratingPoints" },
-        { SortableRatingRole, "sortableRating" },
-        { ActiveRole, "active" },
-        { InstalledRole, "isInstalled" },
-        { ApplicationRole, "application" },
-        { OriginRole, "origin" },
-        { CanUpgrade, "canUpgrade" },
-        { PackageNameRole, "packageName" },
-        { IsTechnicalRole, "isTechnical" },
-        { CategoryRole, "category" },
-        { SectionRole, "section" },
-        { MimeTypes, "mimetypes" },
-        { SizeRole, "size" }
-        })
-    )
+    , m_currentApplicationBackend(nullptr)
 {
     init(load);
-    connect(this, &ResourcesModel::allInitialized, this, &ResourcesModel::fetchingChanged);
+    connect(this, &ResourcesModel::allInitialized, this, &ResourcesModel::slotFetching);
+    connect(this, &ResourcesModel::backendsChanged, this, &ResourcesModel::initApplicationsBackend);
 }
 
 void ResourcesModel::init(bool load)
@@ -79,10 +64,18 @@ void ResourcesModel::init(bool load)
     Q_ASSERT(!s_self);
     Q_ASSERT(QCoreApplication::instance()->thread()==QThread::currentThread());
 
-    connect(TransactionModel::global(), &TransactionModel::transactionAdded, this, &ResourcesModel::resourceChangedByTransaction);
-    connect(TransactionModel::global(), &TransactionModel::transactionRemoved, this, &ResourcesModel::resourceChangedByTransaction);
     if(load)
         QMetaObject::invokeMethod(this, "registerAllBackends", Qt::QueuedConnection);
+
+
+    m_updateAction = new QAction(this);
+    m_updateAction->setIcon(QIcon::fromTheme(QStringLiteral("system-software-update")));
+    m_updateAction->setText(i18nc("@action Checks the Internet for updates", "Check for Updates"));
+    m_updateAction->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_R));
+    connect(this, &ResourcesModel::fetchingChanged, m_updateAction, [this](bool fetching) {
+        m_updateAction->setEnabled(!fetching);
+    });
+    connect(m_updateAction, &QAction::triggered, this, &ResourcesModel::checkForUpdates);
 }
 
 ResourcesModel::ResourcesModel(const QString& backendName, QObject* parent)
@@ -97,158 +90,36 @@ ResourcesModel::~ResourcesModel()
     qDeleteAll(m_backends);
 }
 
-QHash<int, QByteArray> ResourcesModel::roleNames() const
-{
-    return m_roles;
-}
-
 void ResourcesModel::addResourcesBackend(AbstractResourcesBackend* backend)
 {
     Q_ASSERT(!m_backends.contains(backend));
     if(!backend->isValid()) {
         qWarning() << "Discarding invalid backend" << backend->name();
-        CategoryModel::blacklistPlugin(backend->name());
+        CategoryModel::global()->blacklistPlugin(backend->name());
         backend->deleteLater();
         return;
     }
 
+    m_backends += backend;
     if(!backend->isFetching()) {
-        QVector<AbstractResource*> newResources = backend->allResources();
-        int current = rowCount();
-        beginInsertRows(QModelIndex(), current, current+newResources.size());
-        m_backends += backend;
-        m_resources.append(newResources);
-        endInsertRows();
-        emit updatesCountChanged();
+        if (backend->updatesCount() > 0)
+            emit updatesCountChanged();
     } else {
         m_initializingBackends++;
-        m_backends += backend;
-        m_resources.append(QVector<AbstractResource*>());
     }
-    if(m_actionCollection)
-        backend->integrateActions(m_actionCollection);
 
     connect(backend, &AbstractResourcesBackend::fetchingChanged, this, &ResourcesModel::callerFetchingChanged);
     connect(backend, &AbstractResourcesBackend::allDataChanged, this, &ResourcesModel::updateCaller);
+    connect(backend, &AbstractResourcesBackend::resourcesChanged, this, &ResourcesModel::resourceDataChanged);
     connect(backend, &AbstractResourcesBackend::updatesCountChanged, this, &ResourcesModel::updatesCountChanged);
-    connect(backend, &AbstractResourcesBackend::searchInvalidated, this, &ResourcesModel::searchInvalidated);
-
-    emit backendsChanged();
+    connect(backend, &AbstractResourcesBackend::resourceRemoved, this, &ResourcesModel::resourceRemoved);
+    connect(backend, &AbstractResourcesBackend::passiveMessage, this, &ResourcesModel::passiveMessage);
+    connect(backend->backendUpdater(), &AbstractBackendUpdater::progressingChanged, this, &ResourcesModel::slotFetching);
 
     if(m_initializingBackends==0)
         emit allInitialized();
     else
-        emit fetchingChanged();
-}
-
-AbstractResource* ResourcesModel::resourceAt(int row) const
-{
-    for (auto it = m_resources.constBegin(); it != m_resources.constEnd(); ++it) {
-        if (it->size()<=row)
-            row -= it->size();
-        else
-            return it->at(row);
-    }
-    return nullptr;
-}
-
-QModelIndex ResourcesModel::resourceIndex(AbstractResource* res) const
-{
-    AbstractResourcesBackend* backend = res->backend();
-    int row = 0, backends = m_backends.count();
-    for(int i=0; i<backends; i++) {
-        if(m_backends[i]!=backend)
-            row += m_resources[i].size();
-        else {
-            Q_ASSERT(!m_backends[i]->isFetching());
-            int pos = m_resources[i].indexOf(res);
-            Q_ASSERT(pos>=0);
-            return index(row+pos);
-        }
-    }
-
-    return QModelIndex();
-}
-
-QVariant ResourcesModel::data(const QModelIndex& index, int role) const
-{
-    if (!index.isValid()) {
-        return QVariant();
-    }
-
-    AbstractResource* resource = resourceAt(index.row());
-    switch(role) {
-        case ActiveRole:
-            return TransactionModel::global()->transactionFromResource(resource) != nullptr;
-        case ApplicationRole:
-            return qVariantFromValue<QObject*>(resource);
-        case RatingPointsRole:
-        case RatingRole:
-        case SortableRatingRole: {
-            Rating* rating = resource->rating();
-            return rating ? rating->property(roleNames().value(role).constData()) : -1;
-        }
-        case Qt::DecorationRole:
-        case Qt::DisplayRole:
-        case Qt::StatusTipRole:
-        case Qt::ToolTipRole:
-            return QVariant();
-        default: {
-            QByteArray roleText = roleNames().value(role);
-            const QMetaObject* m = resource->metaObject();
-            int propidx = roleText.isEmpty() ? -1 : m->indexOfProperty(roleText.constData());
-
-            if(Q_UNLIKELY(propidx < 0)) {
-                qDebug() << "unknown role:" << role << roleText;
-                return QVariant();
-            } else
-                return m->property(propidx).read(resource);
-        }
-    }
-}
-
-int ResourcesModel::rowCount(const QModelIndex& parent) const
-{
-    if(parent.isValid())
-        return 0; // Not the root element, and children don't have subchildren
-
-    // The root element parents all resources from all backends
-    int ret = 0;
-    Q_FOREACH (const QVector<AbstractResource*>& resources, m_resources)
-        ret += resources.size();
-
-    return ret;
-}
-
-int ResourcesModel::rowsBeforeBackend(AbstractResourcesBackend* backend, QVector<QVector<AbstractResource*>>::iterator& backendsResources)
-{
-    Q_ASSERT(backend);
-    int pos = m_backends.indexOf(backend);
-    Q_ASSERT(pos>=0);
-    backendsResources = m_resources.begin()+pos;
-
-    int before = 0;
-    for(auto it = m_resources.constBegin();
-        it != m_resources.constEnd() && it != backendsResources;
-        ++it)
-    {
-        before+= it->size();
-    }
-    return before;
-}
-
-void ResourcesModel::cleanBackend(AbstractResourcesBackend* backend)
-{
-    QVector<QVector<AbstractResource*>>::iterator backendsResources;
-    int before = rowsBeforeBackend(backend, backendsResources);
-
-    if (backendsResources->isEmpty()) {
-        return;
-    }
-    
-    beginRemoveRows(QModelIndex(), before, before + backendsResources->count() - 1);
-    backendsResources->clear();
-    endRemoveRows();
+        slotFetching();
 }
 
 void ResourcesModel::callerFetchingChanged()
@@ -257,73 +128,37 @@ void ResourcesModel::callerFetchingChanged()
 
     if (!backend->isValid()) {
         qWarning() << "Discarding invalid backend" << backend->name();
-        cleanBackend(backend);
         int idx = m_backends.indexOf(backend);
         Q_ASSERT(idx>=0);
         m_backends.removeAt(idx);
-        m_resources.removeAt(idx);
-        CategoryModel::blacklistPlugin(backend->name());
+//         Q_EMIT backendsChanged();
+        CategoryModel::global()->blacklistPlugin(backend->name());
         backend->deleteLater();
         return;
     }
 
     if(backend->isFetching()) {
         m_initializingBackends++;
-        cleanBackend(backend);
-        emit fetchingChanged();
+        slotFetching();
     } else {
-        resetBackend(backend);
-
         m_initializingBackends--;
         if(m_initializingBackends==0)
             emit allInitialized();
         else
-            emit fetchingChanged();
+            slotFetching();
     }
 }
 
-void ResourcesModel::resetBackend(AbstractResourcesBackend* backend)
-{
-    QVector<AbstractResource*> res = backend->allResources();
-
-    if(!res.isEmpty()) {
-        QVector<QVector<AbstractResource*>>::iterator backendsResources;
-        int before = rowsBeforeBackend(backend, backendsResources);
-        Q_ASSERT(backendsResources->isEmpty());
-        
-        beginInsertRows(QModelIndex(), before, before+res.size()-1);
-        *backendsResources = res;
-        endInsertRows();
-        emit updatesCountChanged();
-    }
-}
-
-void ResourcesModel::updateCaller()
+void ResourcesModel::updateCaller(const QVector<QByteArray>& properties)
 {
     AbstractResourcesBackend* backend = qobject_cast<AbstractResourcesBackend*>(sender());
-    QVector<QVector<AbstractResource*>>::iterator backendsResources;
-    int before = rowsBeforeBackend(backend, backendsResources);
-    if (backendsResources->isEmpty())
-        return;
     
-    emit dataChanged(index(before), index(before+backendsResources->size()-1));
+    Q_EMIT backendDataChanged(backend, properties);
 }
 
 QVector< AbstractResourcesBackend* > ResourcesModel::backends() const
 {
     return m_backends;
-}
-
-AbstractResource* ResourcesModel::resourceByPackageName(const QString& name)
-{
-    foreach(AbstractResourcesBackend* backend, m_backends)
-    {
-        AbstractResource* res = backend->resourceByPackageName(name);
-        if(res) {
-            return res;
-        }
-    }
-    return nullptr;
 }
 
 int ResourcesModel::updatesCount() const
@@ -337,44 +172,36 @@ int ResourcesModel::updatesCount() const
     return ret;
 }
 
+bool ResourcesModel::hasSecurityUpdates() const
+{
+    bool ret = false;
+
+    foreach(AbstractResourcesBackend* backend, m_backends) {
+        ret |= backend->hasSecurityUpdates();
+    }
+
+    return ret;
+}
+
 void ResourcesModel::installApplication(AbstractResource* app)
 {
-    Q_ASSERT(!isFetching());
-    app->backend()->installApplication(app);
+    TransactionModel::global()->addTransaction(app->backend()->installApplication(app));
 }
 
 void ResourcesModel::installApplication(AbstractResource* app, const AddonList& addons)
 {
-    Q_ASSERT(!isFetching());
-    app->backend()->installApplication(app, addons);
+    TransactionModel::global()->addTransaction(app->backend()->installApplication(app, addons));
 }
 
 void ResourcesModel::removeApplication(AbstractResource* app)
 {
-    Q_ASSERT(!isFetching());
-    app->backend()->removeApplication(app);
-}
-
-void ResourcesModel::cancelTransaction(AbstractResource* app)
-{
-    Q_ASSERT(!isFetching());
-    app->backend()->cancelTransaction(app);
-}
-
-QMap<int, QVariant> ResourcesModel::itemData(const QModelIndex& index) const
-{
-    QMap<int, QVariant> ret;
-    QHash<int, QByteArray> names = roleNames();
-    for (auto it = names.constBegin(); it != names.constEnd(); ++it) {
-        ret.insert(it.key(), data(index, it.key()));
-    }
-    return ret;
+    TransactionModel::global()->addTransaction(app->backend()->removeApplication(app));
 }
 
 void ResourcesModel::registerAllBackends()
 {
     DiscoverBackendsFactory f;
-    QList<AbstractResourcesBackend*> backends = f.allBackends();
+    const auto backends = f.allBackends();
     if(m_initializingBackends==0 && backends.isEmpty()) {
         qWarning() << "Couldn't find any backends";
         emit allInitialized();
@@ -382,65 +209,185 @@ void ResourcesModel::registerAllBackends()
         foreach(AbstractResourcesBackend* b, backends) {
             addResourcesBackend(b);
         }
+        emit backendsChanged();
     }
 }
 
 void ResourcesModel::registerBackendByName(const QString& name)
 {
     DiscoverBackendsFactory f;
-    addResourcesBackend(f.backend(name));
-}
+    for(auto b : f.backend(name))
+        addResourcesBackend(b);
 
-void ResourcesModel::integrateActions(KActionCollection* w)
-{
-    Q_ASSERT(w->thread()==thread());
-    m_actionCollection = w;
-    setParent(w);
-    foreach(AbstractResourcesBackend* b, m_backends) {
-        b->integrateActions(w);
-    }
-}
-
-void ResourcesModel::resourceChangedByTransaction(Transaction* t)
-{
-    Q_ASSERT(!t->resource()->backend()->isFetching());
-    QModelIndex idx = resourceIndex(t->resource());
-    if(idx.isValid())
-        emit dataChanged(idx, idx);
+    emit backendsChanged();
 }
 
 bool ResourcesModel::isFetching() const
 {
-    foreach(AbstractResourcesBackend* b, m_backends) {
-        if(b->isFetching())
-            return true;
-    }
-    return false;
+    return m_isFetching;
 }
 
-QList<QAction*> ResourcesModel::messageActions() const
+void ResourcesModel::slotFetching()
 {
-    QList<QAction*> ret;
+    bool newFetching = false;
     foreach(AbstractResourcesBackend* b, m_backends) {
-        ret += b->messageActions();
+        // isFetching should sort of be enough. However, sometimes the backend itself
+        // will still be operating on things, which from a model point of view would
+        // still mean something going on. So, interpret that as fetching as well, for
+        // the purposes of this property.
+        if(b->isFetching() || (b->backendUpdater() && b->backendUpdater()->isProgressing())) {
+            newFetching = true;
+            break;
+        }
     }
-    Q_ASSERT(!ret.contains(nullptr));
-    return ret;
-}
-
-QVariantList ResourcesModel::messageActionsVariant() const
-{
-    QVariantList ret;
-    QList<QAction*> actions = messageActions();
-    ret.reserve(actions.count());
-
-    foreach(QAction* action, actions) {
-        ret += QVariant::fromValue<QObject*>(action);
+    if (newFetching != m_isFetching) {
+        m_isFetching = newFetching;
+        Q_EMIT fetchingChanged(m_isFetching);
     }
-    return ret;
 }
 
 bool ResourcesModel::isBusy() const
 {
     return TransactionModel::global()->rowCount() > 0;
+}
+
+bool ResourcesModel::isExtended(const QString& id)
+{
+    bool ret = true;
+    foreach (AbstractResourcesBackend* backend, m_backends) {
+        ret = backend->extends().contains(id);
+        if (ret)
+            break;
+    }
+    return ret;
+}
+
+AggregatedResultsStream::AggregatedResultsStream(const QSet<ResultsStream*>& streams)
+    : ResultsStream(QStringLiteral("AggregatedResultsStream"))
+{
+    Q_ASSERT(!streams.contains(nullptr));
+    if (streams.isEmpty()) {
+        qWarning() << "no streams to aggregate!!";
+        QTimer::singleShot(0, this, &AggregatedResultsStream::clear);
+    }
+
+    for (auto stream: streams) {
+        connect(stream, &ResultsStream::resourcesFound, this, &AggregatedResultsStream::addResults);
+        connect(stream, &QObject::destroyed, this, &AggregatedResultsStream::destruction);
+        m_streams << stream;
+    }
+
+    m_delayedEmission.setInterval(0);
+    connect(&m_delayedEmission, &QTimer::timeout, this, &AggregatedResultsStream::emitResults);
+}
+
+void AggregatedResultsStream::addResults(const QVector<AbstractResource *>& res)
+{
+    m_results += res;
+
+    m_delayedEmission.start();
+}
+
+void AggregatedResultsStream::emitResults()
+{
+    if (!m_results.isEmpty()) {
+        Q_EMIT resourcesFound(m_results);
+        m_results.clear();
+    }
+    m_delayedEmission.setInterval(m_delayedEmission.interval() + 100);
+    m_delayedEmission.stop();
+}
+
+void AggregatedResultsStream::destruction(QObject* obj)
+{
+    m_streams.remove(obj);
+    clear();
+}
+
+void AggregatedResultsStream::clear()
+{
+    if (m_streams.isEmpty()) {
+        emitResults();
+        Q_EMIT finished();
+        deleteLater();
+    }
+}
+
+AggregatedResultsStream * ResourcesModel::findResourceByPackageName(const QUrl& search)
+{
+    auto streams = kTransform<QSet<ResultsStream*>>(m_backends, [search](AbstractResourcesBackend* backend){ return backend->findResourceByPackageName(search); });
+    return new AggregatedResultsStream(streams);
+}
+
+AggregatedResultsStream* ResourcesModel::search(const AbstractResourcesBackend::Filters& search)
+{
+    if (search.isEmpty()) {
+        return new AggregatedResultsStream ({new ResultsStream(QStringLiteral("emptysearch"), {})});
+    }
+
+    auto streams = kTransform<QSet<ResultsStream*>>(m_backends, [search](AbstractResourcesBackend* backend){ return backend->search(search); });
+    return new AggregatedResultsStream(streams);
+}
+
+AbstractResource* ResourcesModel::resourceForFile(const QUrl& file)
+{
+    AbstractResource* ret = nullptr;
+    foreach(auto backend, m_backends) {
+        ret = backend->resourceForFile(file);
+        if (ret)
+            break;
+    }
+    return ret;
+}
+
+void ResourcesModel::checkForUpdates()
+{
+    for(auto backend: qAsConst(m_backends))
+        backend->checkForUpdates();
+}
+
+QVector<AbstractResourcesBackend *> ResourcesModel::applicationBackends() const
+{
+    return kFilter<QVector<AbstractResourcesBackend*>>(m_backends, [](AbstractResourcesBackend* b){ return b->hasApplications(); });
+}
+
+QVariantList ResourcesModel::applicationBackendsVariant() const
+{
+    return kTransform<QVariantList>(applicationBackends(), [](AbstractResourcesBackend* b) {return QVariant::fromValue<QObject*>(b);});
+}
+
+AbstractResourcesBackend* ResourcesModel::currentApplicationBackend() const
+{
+    return m_currentApplicationBackend;
+}
+
+void ResourcesModel::setCurrentApplicationBackend(AbstractResourcesBackend* backend, bool write)
+{
+    if (backend != m_currentApplicationBackend) {
+        if (write) {
+            KConfigGroup settings(KSharedConfig::openConfig(), "ResourcesModel");
+            if (backend)
+                settings.writeEntry("currentApplicationBackend", backend->name());
+            else
+                settings.deleteEntry("currentApplicationBackend");
+        }
+
+        qDebug() << "setting currentApplicationBackend" << backend;
+        m_currentApplicationBackend = backend;
+        Q_EMIT currentApplicationBackendChanged(backend);
+    }
+}
+
+void ResourcesModel::initApplicationsBackend()
+{
+    KConfigGroup settings(KSharedConfig::openConfig(), "ResourcesModel");
+    const QString name = settings.readEntry<QString>("currentApplicationBackend", QStringLiteral("packagekit-backend"));
+
+    const auto backends = applicationBackends();
+    auto idx = kIndexOf(backends, [name](AbstractResourcesBackend* b) { return b->name() == name; });
+    if (idx<0) {
+        idx = kIndexOf(backends, [](AbstractResourcesBackend* b) { return b->hasApplications(); });
+        qDebug() << "falling back applications backend to" << idx;
+    }
+    setCurrentApplicationBackend(backends.value(idx, nullptr), false);
 }

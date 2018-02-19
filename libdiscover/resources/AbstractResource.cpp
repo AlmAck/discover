@@ -21,27 +21,56 @@
 #include "AbstractResource.h"
 #include "AbstractResourcesBackend.h"
 #include <ReviewsBackend/AbstractReviewsBackend.h>
-#include <klocalizedstring.h>
+#include <Category/CategoryModel.h>
+#include <KLocalizedString>
 #include <KFormat>
+#include <KShell>
+#include <QList>
+#include <QProcess>
+#include <QDebug>
 
 AbstractResource::AbstractResource(AbstractResourcesBackend* parent)
     : QObject(parent)
 {
-    if (parent && parent->reviewsBackend())
-        connect(parent->reviewsBackend(), &AbstractReviewsBackend::ratingsReady, this, &AbstractResource::ratingFetched);
+    connect(this, &AbstractResource::stateChanged, this, &AbstractResource::sizeChanged);
+    connect(this, &AbstractResource::stateChanged, this, &AbstractResource::reportNewState);
 }
 
-bool AbstractResource::canExecute() const
+AbstractResource::~AbstractResource() = default;
+
+QUrl AbstractResource::homepage()
 {
-    return false;
+    return QUrl();
 }
 
-void AbstractResource::invokeApplication() const
-{}
+QUrl AbstractResource::helpURL()
+{
+    return QUrl();
+}
+
+QUrl AbstractResource::bugURL()
+{
+    return QUrl();
+}
+
+QUrl AbstractResource::donationURL()
+{
+    return QUrl();
+}
 
 bool AbstractResource::isTechnical() const
 {
     return false;
+}
+
+void AbstractResource::addMetadata(const QString &key, const QJsonValue &value)
+{
+    m_metadata.insert(key, value);
+}
+
+QJsonValue AbstractResource::getMetadata(const QString &key)
+{
+    return m_metadata.value(key);
 }
 
 bool AbstractResource::canUpgrade()
@@ -56,21 +85,10 @@ bool AbstractResource::isInstalled()
 
 void AbstractResource::fetchScreenshots()
 {
-    QList<QUrl> thumbs, screens;
-    QUrl thumbnail = thumbnailUrl();
-    if(!thumbnail.isEmpty()) {
-        thumbs << thumbnail;
-        screens << screenshotUrl();
-    }
-    emit screenshotsFetched(thumbs, screens);
+    emit screenshotsFetched({}, {});
 }
 
 QStringList AbstractResource::mimetypes() const
-{
-    return QStringList();
-}
-
-QStringList AbstractResource::executables() const
 {
     return QStringList();
 }
@@ -91,11 +109,6 @@ QString AbstractResource::status()
     return QString();
 }
 
-bool AbstractResource::isFromSecureOrigin() const
-{
-    return false;
-}
-
 QString AbstractResource::sizeDescription()
 {
     return KFormat().formatByteSize(size());
@@ -113,4 +126,127 @@ Rating* AbstractResource::rating() const
 {
     AbstractReviewsBackend* ratings = backend()->reviewsBackend();
     return ratings ? ratings->ratingForApplication(const_cast<AbstractResource*>(this)) : nullptr;
+}
+
+QStringList AbstractResource::extends() const
+{
+    return {};
+}
+
+QString AbstractResource::appstreamId() const
+{
+    return {};
+}
+
+void AbstractResource::reportNewState()
+{
+    if (backend()->isFetching())
+        return;
+
+    emit backend()->resourcesChanged(this, {"state", "status", "canUpgrade", "size", "sizeDescription", "installedVersion", "availableVersion" });
+}
+
+static bool shouldFilter(AbstractResource* res, const QPair<FilterType, QString>& filter)
+{
+    bool ret = true;
+    switch (filter.first) {
+        case CategoryFilter:
+            ret = res->categories().contains(filter.second);
+            break;
+        case PkgSectionFilter:
+            ret = res->section() == filter.second;
+            break;
+        case PkgWildcardFilter: {
+            QString wildcard = filter.second;
+            wildcard.remove(QLatin1Char('*'));
+            ret = res->packageName().contains(wildcard);
+        }   break;
+        case AppstreamIdWildcardFilter: {
+            QString wildcard = filter.second;
+            wildcard.remove(QLatin1Char('*'));
+            ret = res->appstreamId().contains(wildcard);
+        }   break;
+        case PkgNameFilter: // Only useful in the not filters
+            ret = res->packageName() == filter.second;
+            break;
+        case InvalidFilter:
+            break;
+    }
+    return ret;
+}
+
+bool AbstractResource::categoryMatches(Category* cat)
+{
+    {
+        const auto orFilters = cat->orFilters();
+        bool orValue = orFilters.isEmpty();
+        for (const auto& filter: orFilters) {
+            if(shouldFilter(this, filter)) {
+                orValue = true;
+                break;
+            }
+        }
+        if(!orValue)
+            return false;
+    }
+
+    Q_FOREACH (const auto &filter, cat->andFilters()) {
+        if(!shouldFilter(this, filter))
+            return false;
+    }
+
+    Q_FOREACH (const auto &filter, cat->notFilters()) {
+        if(shouldFilter(this, filter))
+            return false;
+    }
+    return true;
+}
+
+static QSet<Category*> walkCategories(AbstractResource* res, const QVector<Category*>& cats)
+{
+    QSet<Category*> ret;
+    foreach (Category* cat, cats) {
+        if (res->categoryMatches(cat)) {
+            const auto subcats = walkCategories(res, cat->subCategories());
+            if (subcats.isEmpty()) {
+                ret += cat;
+            } else {
+                ret += subcats;
+            }
+        }
+    }
+
+    return ret;
+}
+
+QSet<Category*> AbstractResource::categoryObjects(const QVector<Category*>& cats) const
+{
+    return walkCategories(const_cast<AbstractResource*>(this), cats);
+}
+
+QString AbstractResource::categoryDisplay() const
+{
+    const auto matchedCategories = categoryObjects(CategoryModel::global()->rootCategories());
+    QStringList ret;
+    foreach(auto cat, matchedCategories) {
+        ret.append(cat->name());
+    }
+    ret.sort();
+    return ret.join(QStringLiteral(", "));
+}
+
+QUrl AbstractResource::url() const
+{
+    const QString asid = appstreamId();
+    return asid.isEmpty() ? QUrl(backend()->name() + QStringLiteral("://") + packageName()) : QUrl(QStringLiteral("appstream://") + asid);
+}
+
+QString AbstractResource::displayOrigin() const
+{
+    return i18nc("origin (backend name)", "%1 (%2)", origin(), backend()->displayName());
+}
+
+QString AbstractResource::executeLabel() const
+{
+    return i18n("Launch");
 }

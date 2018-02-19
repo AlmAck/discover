@@ -26,17 +26,25 @@
 
 class QAction;
 class QAbstractItemModel;
+class AbstractResourcesBackend;
+
 class DISCOVERCOMMON_EXPORT AbstractSourcesBackend : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(AbstractResourcesBackend* resourcesBackend READ resourcesBackend CONSTANT)
     Q_PROPERTY(QAbstractItemModel* sources READ sources CONSTANT)
-    Q_PROPERTY(QString name READ name CONSTANT)
     Q_PROPERTY(QString idDescription READ idDescription CONSTANT)
+    Q_PROPERTY(QList<QAction*> actions READ actions CONSTANT)
     public:
-        AbstractSourcesBackend(QObject* parent);
-        ~AbstractSourcesBackend();
+        explicit AbstractSourcesBackend(AbstractResourcesBackend* parent);
+        ~AbstractSourcesBackend() override;
 
-        virtual QString name() const = 0;
+        enum Roles {
+            IdRole = Qt::UserRole,
+            LastRole
+        };
+        Q_ENUM(Roles)
+
         virtual QString idDescription() = 0;
 
         Q_SCRIPTABLE virtual bool addSource(const QString& id) = 0;
@@ -44,6 +52,11 @@ class DISCOVERCOMMON_EXPORT AbstractSourcesBackend : public QObject
 
         virtual QAbstractItemModel* sources() = 0;
         virtual QList<QAction*> actions() const = 0;
+
+        AbstractResourcesBackend* resourcesBackend() const;
+
+    Q_SIGNALS:
+        void passiveMessage(const QString &message);
 };
 
 #endif // ABSTRACTRESOURCESBACKEND_H

@@ -35,25 +35,23 @@ Q_PROPERTY(int startElements MEMBER m_startElements)
 public:
     explicit DummyBackend(QObject* parent = nullptr);
 
-    virtual void setMetaData(const QString& path) override;
-    virtual QList<AbstractResource*> upgradeablePackages() const override;
-    virtual AbstractResource* resourceByPackageName(const QString& name) const override;
-    virtual int updatesCount() const override;
-    virtual AbstractBackendUpdater* backendUpdater() const override;
-    virtual AbstractReviewsBackend* reviewsBackend() const override;
-    virtual QList<AbstractResource*> searchPackageName(const QString& searchText) override;
-    virtual QVector<AbstractResource*> allResources() const override;
-    virtual bool isValid() const override { return true; } // No external file dependencies that could cause runtime errors
-    virtual QList<QAction*> messageActions() const override { return m_messageActions; }
+    int updatesCount() const override;
+    AbstractBackendUpdater* backendUpdater() const override;
+    AbstractReviewsBackend* reviewsBackend() const override;
+    ResultsStream* search(const AbstractResourcesBackend::Filters & search) override;
+    ResultsStream * findResourceByPackageName(const QUrl& search) override;
+    QHash<QString, DummyResource*> resources() const { return m_resources; }
+    bool isValid() const override { return true; } // No external file dependencies that could cause runtime errors
 
-    virtual void cancelTransaction(AbstractResource* app) override;
-    virtual void installApplication(AbstractResource* app) override;
-    virtual void installApplication(AbstractResource* app, const AddonList& addons) override;
-    virtual void removeApplication(AbstractResource* app) override;
-    virtual bool isFetching() const override { return m_fetching; }
+    Transaction* installApplication(AbstractResource* app) override;
+    Transaction* installApplication(AbstractResource* app, const AddonList& addons) override;
+    Transaction* removeApplication(AbstractResource* app) override;
+    bool isFetching() const override { return m_fetching; }
+    AbstractResource * resourceForFile(const QUrl & ) override;
+    void checkForUpdates() override;
+    QString displayName() const override;
 
 public Q_SLOTS:
-    void checkForUpdates();
     void toggleFetching();
 
 private:
@@ -64,7 +62,6 @@ private:
     DummyReviewsBackend* m_reviews;
     bool m_fetching;
     int m_startElements;
-    QList<QAction*> m_messageActions;
 };
 
 #endif // DUMMYBACKEND_H

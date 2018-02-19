@@ -18,15 +18,17 @@
  */
 
 import QtQuick 2.1
-import QtQuick.Controls 1.1
-import org.kde.discover 1.0
+import QtQuick.Layouts 1.1
+import QtQuick.Controls 2.1
+import org.kde.discover 2.0
+import org.kde.kirigami 2.0 as Kirigami
 
-Item
+ColumnLayout
 {
     id: item
     visible: model.shouldShow
-    height: content.height+10
-
+    property bool compact: false
+    property bool separator: true
     signal markUseful(bool useful)
 
     function usefulnessToString(favorable, total)
@@ -35,54 +37,52 @@ Item
                 ? i18n("<em>Tell us about this review!</em>")
                 : i18n("<em>%1 out of %2 people found this review useful</em>", favorable, total)
     }
-    MouseArea {
-        id: delegateArea
-        hoverEnabled: true
-        width: parent.width
-        height: content.height
 
+    RowLayout {
+        Layout.fillWidth: true
         Label {
-            anchors {
-                left: parent.left
-                right: rating.left
-            }
-
             id: content
-            text: i18n("<p style='margin: 0 0 0 0'><b>%1</b> by %2</p><p style='margin: 0 0 0 0'>%3</p><p style='margin: 0 0 0 0'>%4</p>", summary, reviewer,
-                    display, usefulnessToString(usefulnessFavorable, usefulnessTotal))
-            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+            elide: Text.ElideRight
+            text: i18n("<b>%1</b> by %2", summary, reviewer ? reviewer : i18n("unknown reviewer"))
         }
-
-        Label {
-            anchors {
-                right: parent.right
-                bottom: parent.bottom
-                bottomMargin: -5
-            }
-            opacity: delegateArea.containsMouse ? 1 : 0.2
-
-            text: {
-                switch(usefulChoice) {
-                    case ReviewsModel.Yes:
-                        i18n("<em>Useful? <a href='true'><b>Yes</b></a>/<a href='false'>No</a></em>")
-                        break;
-                    case ReviewsModel.No:
-                        i18n("<em>Useful? <a href='true'>Yes</a>/<a href='false'><b>No</b></a></em>")
-                        break;
-                    default:
-                        i18n("<em>Useful? <a href='true'>Yes</a>/<a href='false'>No</a></em>")
-                        break;
-                }
-            }
-            onLinkActivated: item.markUseful(link=='true')
-        }
-
         Rating {
             id: rating
-            anchors.top: parent.top
-            anchors.right: parent.right
             rating: model.rating
-            starSize: content.font.pixelSize
+            starSize: content.font.pointSize
         }
+    }
+    Label {
+        Layout.fillWidth: true
+        text: display
+        maximumLineCount: item.compact ? 3 : undefined
+        wrapMode: Text.Wrap
+    }
+    Label {
+        visible: !item.compact
+        text: usefulnessToString(usefulnessFavorable, usefulnessTotal)
+    }
+
+    Label {
+        visible: !item.compact
+        Layout.alignment: Qt.AlignRight
+        text: {
+            switch(usefulChoice) {
+                case ReviewsModel.Yes:
+                    i18n("<em>Useful? <a href='true'><b>Yes</b></a>/<a href='false'>No</a></em>")
+                    break;
+                case ReviewsModel.No:
+                    i18n("<em>Useful? <a href='true'>Yes</a>/<a href='false'><b>No</b></a></em>")
+                    break;
+                default:
+                    i18n("<em>Useful? <a href='true'>Yes</a>/<a href='false'>No</a></em>")
+                    break;
+            }
+        }
+        onLinkActivated: item.markUseful(link=='true')
+    }
+    Kirigami.Separator {
+        visible: item.separator
+        Layout.fillWidth: true
     }
 }

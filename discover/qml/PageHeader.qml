@@ -18,27 +18,72 @@
  */
 
 import QtQuick 2.0
+import QtQuick.Layouts 1.2
+import QtQuick.Templates 2.0 as T2
 import org.kde.discover.app 1.0
+import org.kde.kirigami 2.1 as Kirigami
 
-Item {
+T2.Control
+{
     id: root
-    property alias internalMargin: item.internalMargin
-    property real topMargin: 20
-    default property Item content
-    height: Math.max(SystemFonts.generalFont.pointSize*5, content.implicitHeight + 2*item.internalMargin) + item.anchors.topMargin
+    property string search: ""
+    property alias extra: extraLoader.sourceComponent
+    property alias backgroundImage: actualHeader.backgroundImage
 
-    GridItem
-    {
-        id: item
-        anchors {
-            fill: parent
-            topMargin: root.topMargin
+    anchors {
+        left: parent.left
+        right: parent.right
+    }
+    implicitHeight: actualHeader.implicitHeight + extraLoader.actualHeight
+    z: actualHeader.z
+
+    contentItem: Kirigami.ItemViewHeader {
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
         }
-        enabled: false
-        clip: true
-        content: root.content
 
-        Binding { target: root.content; property: "width"; value: item.internalWidth }
-        Binding { target: root.content; property: "height"; value: item.internalHeight }
+
+        id: actualHeader
+        view: root.ListView.view
+        title: root.search.length>0 && page.title.length>0 ? i18n("Search: %1 + %2", escapeHtml(root.search), page.title)
+                                                             : root.search.length>0 ? i18n("Search: %1", escapeHtml(root.search))
+                                                             : page.title
+
+        backgroundImage.asynchronous: false
+    }
+
+    bottomPadding: extraLoader.actualHeight
+
+    Loader {
+        id: extraLoader
+        anchors {
+            left: parent.left
+            right: parent.right
+            bottom: parent.bottom
+
+            leftMargin: item ? item.anchors.leftMargin : 0
+            rightMargin: item ? item.anchors.rightMargin : 0
+            bottomMargin: item ? item.anchors.bottomMargin + distance : 0
+        }
+        property real distance: root.ListView.view.atYBeginning ? 0 : actualHeight
+        Behavior on distance {
+            PropertyAnimation {}
+        }
+
+        readonly property real actualHeight: item ? item.height + item.anchors.topMargin + item.anchors.bottomMargin : 0
+        visible: item && distance<actualHeight
+        Rectangle {
+            color: Kirigami.Theme.backgroundColor
+            anchors {
+                fill: parent
+                margins: -5
+            }
+        }
+        sourceComponent: root.extra
     }
 }

@@ -23,38 +23,37 @@
 
 #include <QAbstractListModel>
 #include <QSet>
-#include <QtQml/QQmlListProperty>
+#include <KConcatenateRowsProxyModel>
 #include "discovercommon_export.h"
+#include "AbstractSourcesBackend.h"
 
 class QAction;
-class AbstractSourcesBackend;
-class DISCOVERCOMMON_EXPORT SourcesModel : public QAbstractListModel
+class AbstractResourcesBackend;
+class SourceBackendModel;
+
+class DISCOVERCOMMON_EXPORT SourcesModel : public KConcatenateRowsProxyModel
 {
     Q_OBJECT
-    Q_PROPERTY(int count READ rowCount NOTIFY sourcesChanged)
-    Q_PROPERTY(QList<QObject*> actions READ actions NOTIFY sourcesChanged)
     public:
         enum Roles {
-            SourceBackend = Qt::UserRole+1
+            SourceNameRole = AbstractSourcesBackend::LastRole,
+            SourcesBackend,
+            ResourcesBackend
         };
-        SourcesModel(QObject* parent = nullptr);
-        ~SourcesModel();
+        Q_ENUM(Roles)
 
+        explicit SourcesModel(QObject* parent = nullptr);
+        ~SourcesModel() override;
+        
         static SourcesModel* global();
+        QVariant data(const QModelIndex & index, int role) const override;
+        QHash<int, QByteArray> roleNames() const override;
 
-        virtual QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
-        virtual int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+        SourceBackendModel* addBackend(AbstractResourcesBackend* backend);
         void addSourcesBackend(AbstractSourcesBackend* sources);
-        virtual QHash<int, QByteArray> roleNames() const override;
-
-        QList<QObject*> actions() const;
-        Q_SCRIPTABLE QVariant get(int row, const QByteArray& roleName);
-
-    Q_SIGNALS:
-        void sourcesChanged();
-
+        
     private:
-        QList<AbstractSourcesBackend*> m_sources;
+        const QAbstractItemModel* modelAt(const QModelIndex& idx) const;
 };
 
 #endif // SOURCESMODEL_H

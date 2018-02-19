@@ -35,14 +35,14 @@ class DISCOVERCOMMON_EXPORT ScreenshotsModel : public QAbstractListModel
     public:
         enum Roles { ThumbnailUrl=Qt::UserRole+1, ScreenshotUrl };
         
-        ScreenshotsModel(QObject* parent = nullptr);
-        virtual QHash<int, QByteArray> roleNames() const override;
+        explicit ScreenshotsModel(QObject* parent = nullptr);
+        QHash<int, QByteArray> roleNames() const override;
 
         AbstractResource* resource() const;
         void setResource(AbstractResource* res);
 
-        virtual QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
-        virtual int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+        QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
+        int rowCount(const QModelIndex& parent = QModelIndex()) const override;
         Q_SCRIPTABLE QUrl screenshotAt(int row) const;
         int count() const;
 

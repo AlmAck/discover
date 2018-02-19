@@ -1,7 +1,8 @@
 import QtQuick 2.1
 import QtQuick.Controls 1.1
 import QtQuick.Layouts 1.1
-import org.kde.discover 1.0
+import org.kde.discover 2.0
+import org.kde.kirigami 2.0 as Kirigami
 
 ConditionalLoader
 {
@@ -9,63 +10,71 @@ ConditionalLoader
     property alias application: listener.resource
     readonly property alias isActive: listener.isActive
     readonly property alias progress: listener.progress
+    readonly property alias listener: listener
+    readonly property string text: !application.isInstalled ? i18n("Install") : i18n("Remove")
     property Component additionalItem: null
-    property bool canUpgrade: true
-    property bool fill: false
+    property bool flat: false
 
     TransactionListener {
         id: listener
     }
 
+    property QtObject action: Kirigami.Action {
+        text: root.text
+        icon {
+            name: application.isInstalled ? "trash-empty" : "cloud-download"
+            color: application.isInstalled ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.positiveTextColor
+        }
+        visible: !listener.isActive
+        onTriggered: root.click()
+    }
+
     function click() {
         if (!isActive) {
-            item.click();
+            if(application.isInstalled)
+                ResourcesModel.removeApplication(application);
+            else
+                ResourcesModel.installApplication(application);
+        } else {
+            console.warn("trying to un/install but resouce still active", application.name)
         }
     }
 
     condition: listener.isActive
     componentTrue: RowLayout {
-        Label {
-            Layout.fillHeight: true
+        LabelBackground {
             Layout.fillWidth: true
             text: listener.statusText
-            verticalAlignment: Text.AlignVCenter
+            progress: listener.progress/100
         }
 
-        Button {
+        ToolButton {
             Layout.fillHeight: true
             iconName: "dialog-cancel"
             enabled: listener.isCancellable
-            onClicked: ResourcesModel.cancelTransaction(application)
+            onClicked: listener.cancel()
         }
     }
 
-    componentFalse: RowLayout {
-        function click() { button.clicked(); }
+    Component {
+        id: flatButton
+        ToolButton {
+            enabled: application.state != AbstractResource.Broken
+            text: root.text
 
-        Loader {
-            Layout.fillWidth: root.fill
-            Component {
-                id: updateButton
-                Button {
-                    text: i18n("Update")
-                    onClicked: ResourcesModel.installApplication(application)
-                }
-            }
-            sourceComponent: (root.canUpgrade && application.canUpgrade) ? updateButton : root.additionalItem
+            onClicked: root.click()
         }
+    }
+
+    Component {
+        id: fullButton
         Button {
-            id: button
-            enabled: !ResourcesModel.isFetching
-            text: !application.isInstalled ? i18n("Install") : i18n("Remove")
-            Layout.fillWidth: root.fill
+            enabled: application.state != AbstractResource.Broken
+            text: root.text
 
-            onClicked: {
-                if(application.isInstalled)
-                    ResourcesModel.removeApplication(application);
-                else
-                    ResourcesModel.installApplication(application);
-            }
+            onClicked: root.click()
         }
     }
+
+    componentFalse: root.flat ? flatButton : fullButton
 }

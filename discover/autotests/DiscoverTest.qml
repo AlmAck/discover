@@ -1,17 +1,26 @@
 import QtQuick 2.1
+import QtQuick.Controls 1.4
 import QtTest 1.1
+import org.kde.discover.app 1.0
 
 Item
 {
     id: testRoot
-    property QtObject appRoot
 
     signal reset()
+    property QtObject appRoot
+
+    StackViewDelegate {
+        id: noTransitionsDelegate
+        popTransition: StackViewTransition { immediate: true }
+        pushTransition: StackViewTransition { immediate: true }
+        replaceTransition: StackViewTransition { immediate: true }
+    }
 
     function verify(condition, msg) {
         if (!condition) {
             console.trace();
-            var e = new Error(msg)
+            var e = new Error(condition + (msg ? (": " + msg) : ""))
             e.object = testRoot;
             throw e;
         }
@@ -20,55 +29,88 @@ Item
     function compare(valA, valB, msg) {
         if (valA !== valB) {
             console.trace();
-            var e = new Error(valA + " !== " + valB + ": " + msg)
+            var e = new Error(valA + " !== " + valB + (msg ? (": " + msg) : ""))
             e.object = testRoot;
             throw e;
         }
     }
 
-    function findChild(obj, typename) {
-        if (obj.toString().indexOf(typename+"_QMLTYPE_") == 0)
-            return obj;
+    function typeName(obj) {
+        var name = obj.toString();
+        var idx = name.indexOf("_QMLTYPE_");
+        return name.substring(0, idx);
+    }
 
-        for(var v in obj.children) {
-            var v = findChild(obj.children[v], typename)
-            if (v)
-                return v
+    function isType(obj, typename) {
+        return obj && obj.toString().indexOf(typename+"_QMLTYPE_") == 0
+    }
+
+    function chooseChild(obj, validator) {
+        if (validator(obj))
+            return true;
+        var children = obj.data ? obj.data : obj.contentData
+        for(var v in children) {
+            var stop = chooseChild(children[v], validator)
+            if (stop)
+                return true
         }
-        return null
+        return false
+    }
+
+    function findChild(obj, typename) {
+        var ret = null;
+        chooseChild(obj, function(o) {
+            var found = isType(o, typename);
+            if (found) {
+                ret = o;
+            }
+            return found
+        })
+        return ret;
     }
 
     SignalSpy {
         id: spy
     }
 
-    function waitForSignal(object, name) {
+    function waitForSignal(object, name, timeout) {
+        if (!timeout) timeout = 5000;
+
+        spy.clear();
         spy.signalName = ""
         spy.target = object;
         spy.signalName = name;
         verify(spy);
+        verify(spy.valid);
+        verify(spy.count == 0);
 
-        var done = true;
         try {
-            spy.wait(5000);
+            spy.wait(timeout);
         } catch (e) {
-            done = false;
+            console.warn("wait for signal '"+name+"' failed")
+            return false;
         }
-        return done;
+        return spy.count>0;
     }
 
     function waitForRendering() {
-        return waitForSignal(app, "frameSwapped")
+        return waitForSignal(appRoot, "frameSwapped")
     }
+
+    property string currentTest: "<null>"
+    onCurrentTestChanged: console.log("changed to test", currentTest)
 
     Connections {
         target: ResourcesModel
+        property bool done: false
         onIsFetchingChanged: {
-            if (ResourcesModel.isFetching)
+            if (ResourcesModel.isFetching || done)
                 return;
 
+            done = true;
             for(var v in testRoot) {
                 if (v.indexOf("test_") == 0) {
+                    testRoot.currentTest = v;
                     testRoot.reset();
                     testRoot[v]();
                 }

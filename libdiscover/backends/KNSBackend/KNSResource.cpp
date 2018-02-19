@@ -20,25 +20,27 @@
 
 #include "KNSResource.h"
 #include "KNSBackend.h"
-#include <QDebug>
+#include <KNSCore/Engine>
+#include <KShell>
+#include <KLocalizedString>
+#include <QProcess>
+#include <QRegularExpression>
 #include <knewstuff_version.h>
 
-KNSResource::KNSResource(const Attica::Content& c, QString  category, QString  icon, KNSBackend* parent)
+KNSResource::KNSResource(const KNSCore::EntryInternal& entry, QStringList categories, KNSBackend* parent)
     : AbstractResource(parent)
-    , m_status(KNS3::Entry::Downloadable)
-    , m_content(c)
-    , m_category(std::move(category))
-    , m_icon(std::move(icon))
-    , m_entry(nullptr)
-{}
-
-KNSResource::~KNSResource()
+    , m_categories(std::move(categories))
+    , m_entry(entry)
+    , m_lastStatus(entry.status())
 {
+    connect(this, &KNSResource::stateChanged, parent, &KNSBackend::updatesCountChanged);
 }
+
+KNSResource::~KNSResource() = default;
 
 AbstractResource::State KNSResource::state()
 {
-    switch(m_status) {
+    switch(m_entry.status()) {
         case KNS3::Entry::Invalid:
             return Broken;
         case KNS3::Entry::Downloadable:
@@ -55,137 +57,175 @@ AbstractResource::State KNSResource::state()
     return None;
 }
 
-void KNSResource::setStatus(KNS3::Entry::Status status)
+KNSBackend * KNSResource::knsBackend() const
 {
-    if(status!=m_status) {
-        m_status = status;
-        emit stateChanged();
-    }
+    return qobject_cast<KNSBackend*>(parent());
 }
 
-QString KNSResource::icon() const
+QVariant KNSResource::icon() const
 {
-    return m_icon;
+    const QString thumbnail = m_entry.previewUrl(KNSCore::EntryInternal::PreviewSmall1);
+    return thumbnail.isEmpty() ? knsBackend()->iconName() : m_entry.previewUrl(KNSCore::EntryInternal::PreviewSmall1);
 }
 
 QString KNSResource::comment()
 {
-    QString s = m_content.summary();
-    if(s.isEmpty()) {
-        s = longDescription();
-        int newLine = s.indexOf(QLatin1Char('\n'));
-        if(newLine>0)
-            s=s.left(newLine);
+    QString ret = m_entry.shortSummary();
+    if(ret.isEmpty()) {
+        ret = m_entry.summary();
+        int newLine = ret.indexOf(QLatin1Char('\n'));
+        if(newLine>0) {
+            ret=ret.left(newLine);
+        }
+        ret = ret.replace(QRegularExpression(QStringLiteral("\\[/?[a-z]*\\]")), QString());
+        ret = ret.remove(QRegularExpression(QStringLiteral("<[^>]*>")));
     }
-    return s;
-}
-
-QString KNSResource::name()
-{
-    return m_content.name();
-}
-
-QString KNSResource::packageName() const
-{
-    return m_content.id();
-}
-
-QStringList KNSResource::categories()
-{
-    return QStringList(m_category);
-}
-
-QUrl KNSResource::homepage()
-{
-    return m_content.detailpage();
-}
-
-QUrl KNSResource::thumbnailUrl()
-{
-    return QUrl(m_content.smallPreviewPicture());
-}
-
-QUrl KNSResource::screenshotUrl()
-{
-    return QUrl(m_content.previewPicture());
-}
-
-const Attica::Content& KNSResource::content()
-{
-    return m_content;
+    return ret;
 }
 
 QString KNSResource::longDescription()
 {
-    QString ret = m_content.description();
+    QString ret = m_entry.summary();
+    if (m_entry.shortSummary().isEmpty()) {
+        const int newLine = ret.indexOf(QLatin1Char('\n'));
+        if (newLine<0)
+            ret.clear();
+        else
+            ret = ret.mid(newLine+1).trimmed();
+    }
     ret = ret.replace(QLatin1Char('\r'), QString());
+    ret = ret.replace(QStringLiteral("[li]"), QStringLiteral("\n* "));
+    ret = ret.replace(QRegularExpression(QStringLiteral("\\[/?[a-z]*\\]")), QString());
     return ret;
 }
 
-void KNSResource::setEntry(const KNS3::Entry& entry)
+QString KNSResource::name()
 {
-    setStatus(entry.status());
-    m_entry.reset(new KNS3::Entry(entry));
+    return m_entry.name();
 }
 
-KNS3::Entry* KNSResource::entry() const
+QString KNSResource::packageName() const
 {
-    return m_entry.data();
+    return m_entry.uniqueId();
+}
+
+QStringList KNSResource::categories()
+{
+    return m_categories;
+}
+
+QUrl KNSResource::homepage()
+{
+    return m_entry.homepage();
+}
+
+void KNSResource::setEntry(const KNSCore::EntryInternal& entry)
+{
+    const bool diff = entry.status() != m_lastStatus;
+    m_entry = entry;
+    if (diff) {
+        m_lastStatus = entry.status();
+        Q_EMIT stateChanged();
+    }
+}
+
+KNSCore::EntryInternal KNSResource::entry() const
+{
+    return m_entry;
 }
 
 QString KNSResource::license()
 {
-    return m_content.licenseName();
+    return m_entry.license();
 }
 
 int KNSResource::size()
 {
-#if KNEWSTUFF_VERSION_MINOR > 3 and KNEWSTUFF_VERSION_MAJOR == 5
-    const
-#endif
-    Attica::DownloadDescription desc = m_content.downloadUrlDescription(0);
-    return desc.size();
+    const auto downloadInfo = m_entry.downloadLinkInformationList();
+    return downloadInfo.isEmpty() ? 0 : downloadInfo.at(0).size;
 }
 
 QString KNSResource::installedVersion() const
 {
-    return m_entry->version();
+    return m_entry.version();
 }
 
 QString KNSResource::availableVersion() const
 {
-    return m_content.version();
+    return !m_entry.updateVersion().isEmpty() ? m_entry.updateVersion() : m_entry.version();
 }
 
 QString KNSResource::origin() const
 {
-    return m_entry->providerId();
+    return m_entry.providerId();
 }
 
 QString KNSResource::section()
 {
-#if KNEWSTUFF_VERSION_MINOR > 3 and KNEWSTUFF_VERSION_MAJOR == 5
-    const
-#endif
-    Attica::DownloadDescription desc = m_content.downloadUrlDescription(0);
-    return desc.category();
+    return m_entry.category();
+}
+
+static void appendIfValid(QList<QUrl>& list, const QUrl &value, const QUrl &fallback = {})
+{
+    if (list.contains(value)) {
+        if (value.isValid() && !value.isEmpty())
+            list << value;
+        else if (!fallback.isEmpty())
+            appendIfValid(list, fallback);
+    }
 }
 
 void KNSResource::fetchScreenshots()
 {
-    QList<QUrl> thumbnails, screenshots;
-    for(int i=0; i<=3; i++) {
-        QString number = QString::number(i);
-        QString last = m_content.previewPicture(number);
-        if(!last.isEmpty()) {
-            thumbnails += QUrl(m_content.smallPreviewPicture(number));
-            screenshots += QUrl(last);
-        }
-    }
-    emit screenshotsFetched(thumbnails, screenshots);
+    QList<QUrl> preview;
+    appendIfValid(preview, QUrl(m_entry.previewUrl(KNSCore::EntryInternal::PreviewSmall1)));
+    appendIfValid(preview, QUrl(m_entry.previewUrl(KNSCore::EntryInternal::PreviewSmall2)));
+    appendIfValid(preview, QUrl(m_entry.previewUrl(KNSCore::EntryInternal::PreviewSmall3)));
+
+    QList<QUrl> screenshots;
+    appendIfValid(screenshots, QUrl(m_entry.previewUrl(KNSCore::EntryInternal::PreviewBig1)), QUrl(m_entry.previewUrl(KNSCore::EntryInternal::PreviewSmall1)));
+    appendIfValid(screenshots, QUrl(m_entry.previewUrl(KNSCore::EntryInternal::PreviewBig2)), QUrl(m_entry.previewUrl(KNSCore::EntryInternal::PreviewSmall2)));
+    appendIfValid(screenshots, QUrl(m_entry.previewUrl(KNSCore::EntryInternal::PreviewBig3)), QUrl(m_entry.previewUrl(KNSCore::EntryInternal::PreviewSmall3)));
+
+    emit screenshotsFetched(preview, screenshots);
 }
 
 void KNSResource::fetchChangelog()
 {
-    emit changelogFetched(m_content.changelog());
+    emit changelogFetched(m_entry.changelog());
+}
+
+QStringList KNSResource::extends() const
+{
+    return knsBackend()->extends();
+}
+
+QStringList KNSResource::executables() const
+{
+    if (knsBackend()->engine()->hasAdoptionCommand())
+        return {knsBackend()->engine()->adoptionCommand(m_entry)};
+    else
+        return {};
+}
+
+QUrl KNSResource::url() const
+{
+    return QUrl(QStringLiteral("kns://")+knsBackend()->name() + QLatin1Char('/') + QUrl(m_entry.providerId()).host() + QLatin1Char('/') + m_entry.uniqueId());
+}
+
+void KNSResource::invokeApplication() const
+{
+    QStringList exes = executables();
+    if(!exes.isEmpty()) {
+        const QString exe = exes.constFirst();
+        auto args = KShell::splitArgs(exe);
+        QProcess::startDetached(args.takeFirst(), args);
+    } else {
+        qWarning() << "cannot execute" << packageName();
+    }
+}
+
+QString KNSResource::executeLabel() const
+{
+    return i18n("Use");
 }

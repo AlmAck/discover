@@ -32,52 +32,36 @@ class AbstractResource;
 class DISCOVERCOMMON_EXPORT UpdateItem
 {
 public:
-    enum class ItemType : quint8 {
-        RootItem,
-        CategoryItem,
-        ApplicationItem
-    };
-
-    UpdateItem();
-    UpdateItem(QString categoryName,
-               QIcon categoryIcon);
-    explicit UpdateItem(AbstractResource *app, UpdateItem *parent = nullptr);
+    explicit UpdateItem(AbstractResource *app);
 
     ~UpdateItem();
 
-    UpdateItem *parent() const;
-    void setParent(UpdateItem *parent);
 
-    void setChildren(const QVector<UpdateItem*> &child);
-    QVector<UpdateItem *> children() const;
-    UpdateItem *child(int row) const;
-    int childCount() const;
-    int row() const;
-
+    void setSection(const QString &section) { m_section = section; }
+    QString section() const { return m_section; }
     void setProgress(qreal progress);
     qreal progress() const;
+
+    QString changelog() const;
+    void setChangelog(const QString &changelog);
 
     AbstractResource *app() const;
     QString name() const;
     QString version() const;
-    QIcon icon() const;
+    QVariant icon() const;
     qint64 size() const;
     Qt::CheckState checked() const;
-    ItemType type() const;
 
-    int checkedItems() const;
     AbstractResource* resource() const { return m_app; }
 
 private:
-    void sort();
-    AbstractResource *m_app;
+    AbstractResource * const m_app;
 
-    UpdateItem *m_parent;
-    ItemType m_type;
-    QVector<UpdateItem *> m_children;
-    QString m_categoryName;
-    QIcon m_categoryIcon;
+    const QString m_categoryName;
+    const QIcon m_categoryIcon;
     qreal m_progress;
+    QString m_changelog;
+    QString m_section;
 };
 
 #endif // UPDATEITEM_H

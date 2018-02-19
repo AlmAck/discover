@@ -19,14 +19,21 @@
  ***************************************************************************/
 
 #include "AppPackageKitResource.h"
-#include <AppstreamQt/screenshot.h>
-#include <AppstreamQt/image.h>
+#include <AppStreamQt/screenshot.h>
+#include <AppStreamQt/icon.h>
+#include <AppStreamQt/image.h>
+#include <AppStreamQt/release.h>
+#include <appstream/AppStreamUtils.h>
 #include <KLocalizedString>
 #include <KToolInvocation>
+#include <QIcon>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QDebug>
+#include "config-paths.h"
 
-AppPackageKitResource::AppPackageKitResource(const Appstream::Component& data, PackageKitBackend* parent)
-    : PackageKitResource(data.packageNames().at(0), QString(), parent)
+AppPackageKitResource::AppPackageKitResource(const AppStream::Component& data, const QString &packageName, PackageKitBackend* parent)
+    : PackageKitResource(packageName, QString(), parent)
     , m_appdata(data)
 {
     Q_ASSERT(data.isValid());
@@ -39,38 +46,72 @@ QString AppPackageKitResource::name()
 
 QString AppPackageKitResource::longDescription()
 {
-    return m_appdata.description();
+    const auto desc = m_appdata.description();
+    if (!desc.isEmpty())
+        return desc;
+
+    return PackageKitResource::longDescription();
 }
 
-QString AppPackageKitResource::icon() const
+static QIcon componentIcon(const AppStream::Component &comp)
 {
-    QString anIcon = m_appdata.icon();
-    if (anIcon.isEmpty()) {
-        QUrl iconUrl = m_appdata.iconUrl(QSize());
-        if (iconUrl.isLocalFile())
-            anIcon = iconUrl.toLocalFile();
+    QIcon ret;
+    const auto icons = comp.icons();
+    if (icons.isEmpty()) {
+        ret = QIcon::fromTheme(QStringLiteral("package-x-generic"));
+    } else foreach(const AppStream::Icon &icon, icons) {
+        QStringList stock;
+        switch(icon.kind()) {
+            case AppStream::Icon::KindLocal:
+                ret.addFile(icon.url().toLocalFile(), icon.size());
+                break;
+            case AppStream::Icon::KindCached:
+                ret.addFile(icon.url().toLocalFile(), icon.size());
+                break;
+            case AppStream::Icon::KindStock:
+                stock += icon.name();
+                break;
+            default:
+                break;
+        }
+        if (ret.isNull() && !stock.isEmpty()) {
+            ret = QIcon::fromTheme(stock.first());
+        }
     }
-    return anIcon;
+    return ret;
+}
+
+QVariant AppPackageKitResource::icon() const
+{
+    return componentIcon(m_appdata);
 }
 
 QString AppPackageKitResource::license()
 {
-    return m_appdata.projectLicense();
+    const auto license = m_appdata.projectLicense();
+    return license.isEmpty() ? PackageKitResource::license() : license;
 }
 
 QStringList AppPackageKitResource::mimetypes() const
 {
-    return findProvides(Appstream::Provides::KindMimetype);
+    return m_appdata.provided(AppStream::Provided::KindMimetype).items();
 }
 
 QStringList AppPackageKitResource::categories()
 {
-    return m_appdata.categories();
+    auto cats = m_appdata.categories();
+    if (m_appdata.kind() != AppStream::Component::KindAddon)
+        cats.append(QStringLiteral("Application"));
+    return cats;
 }
 
 QString AppPackageKitResource::comment()
 {
-    return m_appdata.summary();
+    const auto summary = m_appdata.summary();
+    if (!summary.isEmpty())
+        return summary;
+
+    return PackageKitResource::comment();
 }
 
 QString AppPackageKitResource::appstreamId() const
@@ -80,67 +121,46 @@ QString AppPackageKitResource::appstreamId() const
 
 QUrl AppPackageKitResource::homepage()
 {
-    QList< QUrl > urls = m_appdata.urls(Appstream::Component::UrlKindHomepage);
-    return urls.isEmpty() ? PackageKitResource::homepage() : urls.first();
+    return m_appdata.url(AppStream::Component::UrlKindHomepage);
+}
+
+QUrl AppPackageKitResource::helpURL()
+{
+    return m_appdata.url(AppStream::Component::UrlKindHelp);
+}
+
+QUrl AppPackageKitResource::bugURL()
+{
+    return m_appdata.url(AppStream::Component::UrlKindBugtracker);
+}
+
+QUrl AppPackageKitResource::donationURL()
+{
+    return m_appdata.url(AppStream::Component::UrlKindDonation);
 }
 
 bool AppPackageKitResource::isTechnical() const
 {
-    return false;
+    static QString desktop = QString::fromUtf8(qgetenv("XDG_CURRENT_DESKTOP"));
+    const auto desktops = m_appdata.compulsoryForDesktops();
+    return (!desktops.isEmpty() && !desktops.contains(desktop)) || m_appdata.kind() == AppStream::Component::KindAddon;
 }
 
-QStringList AppPackageKitResource::executables() const
+void AppPackageKitResource::fetchScreenshots()
 {
-    return findProvides(Appstream::Provides::KindBinary);
-}
+    QList<QUrl> thumbnails, screenshots;
 
-void AppPackageKitResource::invokeApplication() const
-{
-    QStringList exes = executables();
-    if(!exes.isEmpty())
-        KToolInvocation::startServiceByDesktopPath(exes.first());
-}
+    Q_FOREACH (const AppStream::Screenshot &s, m_appdata.screenshots()) {
+        const QUrl thumbnail = AppStreamUtils::imageOfKind(s.images(), AppStream::Image::KindThumbnail);
+        const QUrl plain = AppStreamUtils::imageOfKind(s.images(), AppStream::Image::KindSource);
+        if (plain.isEmpty())
+            qWarning() << "invalid screenshot for" << name();
 
-QUrl screenshot(const Appstream::Component& comp, Appstream::Image::Kind kind)
-{
-    QUrl ret;
-    Q_FOREACH (const Appstream::Screenshot &s, comp.screenshots()) {
-        Q_FOREACH (const Appstream::Image &i, s.images()) {
-            if (i.kind() == kind) {
-                ret = i.url();
-            }
-        }
-        if (s.isDefault() && !ret.isEmpty())
-            break;
+        screenshots << plain;
+        thumbnails << (thumbnail.isEmpty() ? plain : thumbnail);
     }
-    return ret;
-}
 
-QUrl AppPackageKitResource::screenshotUrl()
-{
-    QUrl url = screenshot(m_appdata, Appstream::Image::Plain);
-    return url.isEmpty() ? PackageKitResource::screenshotUrl() : url;
-
-}
-
-QUrl AppPackageKitResource::thumbnailUrl()
-{
-    QUrl url = screenshot(m_appdata, Appstream::Image::Thumbnail);
-    return url.isEmpty() ? PackageKitResource::screenshotUrl() : url;
-}
-
-bool AppPackageKitResource::canExecute() const
-{
-    return !executables().isEmpty();
-}
-
-QStringList AppPackageKitResource::findProvides(Appstream::Provides::Kind kind) const
-{
-    QStringList ret;
-    Q_FOREACH (Appstream::Provides p, m_appdata.provides())
-        if (p.kind() == kind)
-            ret += p.value();
-    return ret;
+    Q_EMIT screenshotsFetched(thumbnails, screenshots);
 }
 
 QStringList AppPackageKitResource::allPackageNames() const
@@ -155,8 +175,34 @@ QList<PackageState> AppPackageKitResource::addonsInformation()
 
     QList<PackageState> ret;
     Q_FOREACH (AppPackageKitResource* r, res) {
-        qDebug() << "addons!" << r->packageName() << r->name();
         ret += PackageState(r->appstreamId(), r->name(), r->comment(), r->isInstalled());
     }
     return ret;
 }
+
+QStringList AppPackageKitResource::extends() const
+{
+    return m_appdata.extends();
+}
+
+void AppPackageKitResource::fetchChangelog()
+{
+    QString changelog;
+    for(const auto& rel: m_appdata.releases()) {
+        changelog += QStringLiteral("<h3>") + rel.version() + QStringLiteral("</h3>");
+        changelog += QStringLiteral("<p>") + rel.description() + QStringLiteral("</p>");
+    }
+    emit changelogFetched(changelog);
+}
+
+void AppPackageKitResource::invokeApplication() const
+{
+    const QStringList exes = m_appdata.provided(AppStream::Provided::KindBinary).items();
+    if (exes.isEmpty()) {
+        const auto servicePath = QStandardPaths::locate(QStandardPaths::ApplicationsLocation, m_appdata.id());
+        QProcess::startDetached(QStringLiteral(CMAKE_INSTALL_FULL_LIBEXECDIR_KF5 "/discover/runservice"), {servicePath});
+    } else {
+        QProcess::startDetached(exes.constFirst());
+    }
+}
+

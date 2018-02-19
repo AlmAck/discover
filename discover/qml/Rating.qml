@@ -20,41 +20,46 @@
 import QtQuick 2.1
 import QtQuick.Layouts 1.1
 import org.kde.kquickcontrolsaddons 2.0
-import org.kde.discover.app 1.0
+import org.kde.kirigami 2.0 as Kirigami
 
 RowLayout
 {
     id: view
     property bool editable: false
     property int max: 10
-    property real rating: 2
-    property real starSize: SystemFonts.generalFont.pointSize*2
+    property int rating: 0
+    property real starSize: Kirigami.Units.gridUnit
 
-    visible: rating>=0
     clip: true
     spacing: 0
+
+    readonly property var ratingIndex: (theRepeater.count/view.max)*view.rating
 
     Repeater {
         id: theRepeater
         model: 5
-        delegate: QIconItem {
+        delegate: Kirigami.Icon {
             Layout.minimumWidth: view.starSize
             Layout.minimumHeight: view.starSize
+            Layout.preferredWidth: view.starSize
+            Layout.preferredHeight: view.starSize
 
             width: height
-            icon: "rating"
-            opacity: (mouse.containsMouse ? 0.7
-                        : (view.max/theRepeater.count*index)>view.rating ? 0.2
+            source: "rating"
+            opacity: (view.editable && mouse.item.containsMouse ? 0.7
+                        : index>=view.ratingIndex ? 0.2
                         : 1)
 
-            MouseArea {
+            ConditionalLoader {
                 id: mouse
-                enabled: editable
-                hoverEnabled: editable
 
                 anchors.fill: parent
-                onClicked: rating = (max/theRepeater.model*index)
-
+                condition: view.editable
+                componentTrue: MouseArea {
+                    hoverEnabled: true
+                    onClicked: rating = (max/theRepeater.model*(index+1))
+                }
+                componentFalse: null
             }
         }
     }

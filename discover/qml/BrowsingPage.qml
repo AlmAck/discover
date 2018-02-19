@@ -17,42 +17,52 @@
  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-import QtQuick 2.1
+import QtQuick 2.4
 import QtQuick.Controls 1.1
 import QtQuick.Layouts 1.1
-import org.kde.discover 1.0
+import org.kde.discover 2.0
 import org.kde.kquickcontrolsaddons 2.0
+import org.kde.discover 2.0
 import org.kde.discover.app 1.0
 import "navigation.js" as Navigation
+import org.kde.kirigami 2.1 as Kirigami
 
-ScrollView {
-    id: view
-    readonly property string title: ""
-    readonly property string icon: "go-home"
-    flickableItem.flickableDirection: Flickable.VerticalFlick
-    clip: true
+DiscoverPage
+{
+    id: page
+    title: i18n("Featured")
+    leftPadding: 0
+    rightPadding: 0
+    topPadding: 0
+    bottomPadding: 0
+
+    readonly property bool isHome: true
 
     function searchFor(text) {
-        Navigation.openApplicationList("edit-find", i18n("Search..."), null, text)
+        if (text.length === 0)
+            return;
+        Navigation.openCategory(null, "")
     }
 
-    ColumnLayout
-    {
-        readonly property real margin: SystemFonts.generalFont.pointSize
-        width: view.viewport.width-margin*2
-        x: margin
+    signal clearSearch()
 
-        FeaturedBanner {
-            Layout.fillWidth: true
-            Layout.preferredHeight: parent.margin*30
-        }
+    readonly property bool compact: page.width < 500 || !applicationWindow().wideScreen
 
-        CategoryDisplay {
-            spacing: parent.margin
-            Layout.fillWidth: true
+    ListView {
+        id: browsingView
+
+        anchors {
+            top: parent.top
+            topMargin: Kirigami.Units.gridUnit
         }
-        Item {
-            height: parent.margin
+        model: FeaturedModel {}
+        spacing: Kirigami.Units.gridUnit
+        currentIndex: -1
+        delegate: ApplicationDelegate {
+            x: Kirigami.Units.gridUnit
+            width: ListView.view.width - Kirigami.Units.gridUnit*2
+            application: model.application
+            compact: page.compact
         }
     }
 }

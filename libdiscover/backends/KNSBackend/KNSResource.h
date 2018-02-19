@@ -22,7 +22,7 @@
 #define KNSRESOURCE_H
 
 #include <resources/AbstractResource.h>
-#include <kns3/entry.h>
+#include <KNSCore/EntryInternal>
 #include <attica/content.h>
 
 #include "discovercommon_export.h"
@@ -32,41 +32,44 @@ class DISCOVERCOMMON_EXPORT KNSResource : public AbstractResource
 {
 Q_OBJECT
 public:
-    explicit KNSResource(const Attica::Content& c, QString  category, QString  icon, KNSBackend* parent);
-    virtual ~KNSResource();
+    explicit KNSResource(const KNSCore::EntryInternal & c, QStringList categories, KNSBackend* parent);
+    ~KNSResource() override;
 
-    void setStatus(KNS3::Entry::Status status);
+    AbstractResource::State state() override;
+    QVariant icon() const override;
+    QString comment() override;
+    QString name() override;
+    QString packageName() const override;
+    QStringList categories() override;
+    QUrl homepage() override;
+    QString license() override;
+    QString longDescription() override;
+    QList<PackageState> addonsInformation() override { return QList<PackageState>(); }
+    QString availableVersion() const override;
+    QString installedVersion() const override;
+    QString origin() const override;
+    QString section() override;
+    void fetchScreenshots() override;
+    int size() override;
+    void fetchChangelog() override;
+    QStringList extends() const override;
 
-    virtual AbstractResource::State state() override;
-    virtual QString icon() const override;
-    virtual QString comment() override;
-    virtual QString name() override;
-    virtual QString packageName() const override;
-    virtual QStringList categories() override;
-    virtual QUrl homepage() override;
-    virtual QUrl thumbnailUrl() override;
-    virtual QUrl screenshotUrl() override;
-    virtual QString license() override;
-    virtual QString longDescription() override;
-    virtual QList<PackageState> addonsInformation() override { return QList<PackageState>(); }
-    virtual QString availableVersion() const override;
-    virtual QString installedVersion() const override;
-    virtual QString origin() const override;
-    virtual QString section() override;
-    virtual void fetchScreenshots() override;
-    virtual int size() override;
-    virtual void fetchChangelog() override;
+    KNSBackend* knsBackend() const;
 
-    const Attica::Content& content();
-    void setEntry(const KNS3::Entry& entry);
-    KNS3::Entry* entry() const;
+    void setEntry(const KNSCore::EntryInternal& entry);
+    KNSCore::EntryInternal entry() const;
+
+    bool canExecute() const override { return !executables().isEmpty(); }
+    QStringList executables() const;
+    void invokeApplication() const override;
+
+    QUrl url() const override;
+    QString executeLabel() const override;
 
 private:
-    KNS3::Entry::Status m_status;
-    const Attica::Content m_content;
-    const QString m_category;
-    const QString m_icon;
-    QScopedPointer<KNS3::Entry> m_entry;
+    const QStringList m_categories;
+    KNSCore::EntryInternal m_entry;
+    KNS3::Entry::Status m_lastStatus;
 };
 
 #endif // KNSRESOURCE_H

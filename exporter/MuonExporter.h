@@ -24,26 +24,27 @@
 #include <QSet>
 #include <QTimer>
 
+class AbstractResource;
+
 class MuonExporter : public QObject
 {
     Q_OBJECT
     public:
         explicit MuonExporter();
-        ~MuonExporter();
+        ~MuonExporter() override;
 
         void setExportPath(const QUrl& url);
 
     public Q_SLOTS:
-        void exportModel();
-        void allBackendsInitialized();
+        void fetchResources();
+        void exportResources(const QVector<AbstractResource*>& resources);
 
     Q_SIGNALS:
         void exportDone();
 
     private:
         QUrl m_path;
-        QTimer* m_startExportingTimer;
-        QSet<QByteArray> m_exculdedProperties;
+        const QSet<QByteArray> m_exculdedProperties;
 };
 
 #endif // MUONEXPORTER_H

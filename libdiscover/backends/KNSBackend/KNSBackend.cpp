@@ -22,13 +22,18 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QStandardPaths>
+#include <QTimer>
+#include <QDirIterator>
 
 // Attica includes
 #include <attica/content.h>
 #include <attica/providermanager.h>
 
 // KDE includes
-#include <kns3/downloadmanager.h>
+#include <knewstuffcore_version.h>
+#include <KNSCore/Engine>
+#include <KNSCore/QuestionManager>
 #include <KConfigGroup>
 #include <KDesktopFile>
 #include <KLocalizedString>
@@ -36,99 +41,144 @@
 // DiscoverCommon includes
 #include "Transaction/Transaction.h"
 #include "Transaction/TransactionModel.h"
+#include "Category/Category.h"
 
 // Own includes
 #include "KNSBackend.h"
 #include "KNSResource.h"
 #include "KNSReviews.h"
 #include <resources/StandardBackendUpdater.h>
+#include "utils.h"
 
-MUON_BACKEND_PLUGIN(KNSBackend)
+class KNSBackendFactory : public AbstractResourcesBackendFactory {
+    Q_OBJECT
+    Q_PLUGIN_METADATA(IID "org.kde.muon.AbstractResourcesBackendFactory")
+    Q_INTERFACES(AbstractResourcesBackendFactory)
+    public:
+        KNSBackendFactory() {
+            connect(KNSCore::QuestionManager::instance(), &KNSCore::QuestionManager::askQuestion, this, [](KNSCore::Question* q) {
+                qWarning() << q->question() << q->questionType();
+                q->setResponse(KNSCore::Question::InvalidResponse);
+            });
+        }
 
-QSharedPointer<Attica::ProviderManager> KNSBackend::m_atticaManager;
+        QVector<AbstractResourcesBackend*> newInstance(QObject* parent, const QString &/*name*/) const override
+        {
+            QVector<AbstractResourcesBackend*> ret;
+            for (const QString &path: QStandardPaths::standardLocations(QStandardPaths::GenericConfigLocation)) {
+                QDirIterator dirIt(path, {QStringLiteral("*.knsrc")}, QDir::Files);
+                for(; dirIt.hasNext(); ) {
+                    dirIt.next();
 
-void KNSBackend::initManager(const QUrl& entry)
-{
-    bool loadNeeded = false;
-    if(!m_atticaManager) {
-        m_atticaManager = QSharedPointer<Attica::ProviderManager>(new Attica::ProviderManager);
-        loadNeeded = true;
-    }
-    if(!m_atticaManager->defaultProviderFiles().contains(entry)) {
-        m_atticaManager->addProviderFileToDefaultProviders(entry);
-        loadNeeded = true;
-    }
+                    auto bk = new KNSBackend(parent, QStringLiteral("plasma"), dirIt.filePath());
+                    ret += bk;
+                }
+            }
+            return ret;
+        }
+};
 
-    if(loadNeeded)
-        m_atticaManager->loadDefaultProviders();
-}
+Q_DECLARE_METATYPE(KNSCore::EntryInternal)
 
-KNSBackend::KNSBackend(QObject* parent)
+KNSBackend::KNSBackend(QObject* parent, const QString& iconName, const QString &knsrc)
     : AbstractResourcesBackend(parent)
     , m_fetching(false)
     , m_isValid(true)
-    , m_page(0)
     , m_reviews(new KNSReviews(this))
+    , m_name(knsrc)
+    , m_iconName(iconName)
     , m_updater(new StandardBackendUpdater(this))
-{}
-
-KNSBackend::~KNSBackend()
-{}
-
-void KNSBackend::markInvalid()
 {
-    qWarning() << "invalid kns backend!";
+    const QString fileName = QFileInfo(m_name).fileName();
+    setName(fileName);
+    setObjectName(knsrc);
+
+    const KConfig conf(m_name);
+    if (!conf.hasGroup("KNewStuff3")) {
+        markInvalid(QStringLiteral("Config group not found! Check your KNS3 installation."));
+        return;
+    }
+
+    m_categories = QStringList{ fileName };
+
+    const KConfigGroup group = conf.group("KNewStuff3");
+    m_extends = group.readEntry("Extends", QStringList());
+    m_reviews->setProviderUrl(QUrl(group.readEntry("ProvidersUrl", QString())));
+
+    setFetching(true);
+
+    m_engine = new KNSCore::Engine(this);
+    m_engine->init(m_name);
+#if KNEWSTUFFCORE_VERSION_MAJOR==5 && KNEWSTUFFCORE_VERSION_MINOR>=36
+    m_engine->setPageSize(100);
+#endif
+    // Setting setFetching to false when we get an error ensures we don't end up in an eternally-fetching state
+    connect(m_engine, &KNSCore::Engine::signalError, this, [this](const QString &_error) {
+        QString error = _error;
+        if(error == QLatin1Literal("All categories are missing")) {
+            markInvalid(error);
+            error = i18n("Invalid %1 backend, contact your distributor.", m_displayName);
+        }
+        m_responsePending = false;
+        Q_EMIT searchFinished();
+        Q_EMIT availableForQueries();
+        this->setFetching(false);
+        qWarning() << "kns error" << objectName() << error;
+        passiveMessage(i18n("%1: %2", name(), error));
+    });
+    connect(m_engine, &KNSCore::Engine::signalEntriesLoaded, this, &KNSBackend::receivedEntries, Qt::QueuedConnection);
+    connect(m_engine, &KNSCore::Engine::signalEntryChanged, this, &KNSBackend::statusChanged, Qt::QueuedConnection);
+    connect(m_engine, &KNSCore::Engine::signalEntryDetailsLoaded, this, &KNSBackend::statusChanged);
+    connect(m_engine, &KNSCore::Engine::signalProvidersLoaded, this, &KNSBackend::fetchInstalled);
+
+    const QVector<QPair<FilterType, QString>> filters = { {CategoryFilter, fileName } };
+    const QSet<QString> backendName = { name() };
+    m_displayName = group.readEntry("Name", QString());
+    if (m_displayName.isEmpty()) {
+        m_displayName = fileName.mid(0, fileName.indexOf(QLatin1Char('.')));
+        m_displayName[0] = m_displayName[0].toUpper();
+    }
+
+    static const QSet<QString> knsrcPlasma = {
+        QStringLiteral("aurorae.knsrc"), QStringLiteral("icons.knsrc"), QStringLiteral("kfontinst.knsrc"), QStringLiteral("lookandfeel.knsrc"), QStringLiteral("plasma-themes.knsrc"), QStringLiteral("plasmoids.knsrc"),
+        QStringLiteral("wallpaper.knsrc"), QStringLiteral("xcursor.knsrc"),
+
+        QStringLiteral("cgcgtk3.knsrc"), QStringLiteral("cgcicon.knsrc"), QStringLiteral("cgctheme.knsrc"), //GTK integration
+        QStringLiteral("kwinswitcher.knsrc"), QStringLiteral("kwineffect.knsrc"), QStringLiteral("kwinscripts.knsrc"), //KWin
+        QStringLiteral("comic.knsrc"), QStringLiteral("colorschemes.knsrc"),
+        QStringLiteral("emoticons.knsrc"), QStringLiteral("plymouth.knsrc"),
+        QStringLiteral("sddmtheme.knsrc")
+    };
+    auto actualCategory = new Category(m_displayName, QStringLiteral("plasma"), filters, backendName, {}, QUrl(), true);
+
+    const auto topLevelName = knsrcPlasma.contains(fileName)? i18n("Plasma Addons") : i18n("Application Addons");
+    const QUrl decoration(knsrcPlasma.contains(fileName)? QStringLiteral("https://c2.staticflickr.com/4/3148/3042248532_20bd2e38f4_b.jpg") : QStringLiteral("https://c2.staticflickr.com/8/7067/6847903539_d9324dcd19_o.jpg"));
+    auto addonsCategory = new Category(topLevelName, QStringLiteral("plasma"), filters, backendName, {actualCategory}, decoration, true);
+    m_rootCategories = { addonsCategory };
+}
+
+KNSBackend::~KNSBackend() = default;
+
+void KNSBackend::markInvalid(const QString &message)
+{
+    qWarning() << "invalid kns backend!" << m_name << "because:" << message;
     m_isValid = false;
     setFetching(false);
 }
 
-void KNSBackend::setMetaData(const QString& path)
+void KNSBackend::fetchInstalled()
 {
-    KDesktopFile cfg(path);
-    KConfigGroup service = cfg.group("Desktop Entry");
+    auto search = new OneTimeAction([this]() {
+        Q_EMIT startingSearch();
+        m_onePage = true;
+        m_responsePending = true;
+        m_engine->checkForInstalled();
+    }, this);
 
-    m_iconName = service.readEntry("Icon", QString());
-    QString knsrc = service.readEntry("X-Muon-Arguments", QString());
-    m_name = QStandardPaths::locate(QStandardPaths::GenericConfigLocation, knsrc);
-    if (m_name.isEmpty()) {
-        QString p = QFileInfo(path).dir().filePath(knsrc);
-        if (QFile::exists(p))
-            m_name = p;
-
-    }
-
-    if (m_name.isEmpty()) {
-        markInvalid();
-        qWarning() << "Couldn't find knsrc file" << knsrc;
-        return;
-    }
-    KConfig conf(m_name);
-    KConfigGroup group;
-
-    if (conf.hasGroup("KNewStuff3"))
-        group = conf.group("KNewStuff3");
-
-    if (!group.isValid()) {
-        markInvalid();
-        qWarning() << "Config group not found! Check your KNS3 installation.";
-        return;
-    }
-
-    QStringList cats = group.readEntry("Categories", QStringList());
-    initManager(QUrl(group.readEntry("ProvidersUrl", QString())));
-    connect(m_atticaManager.data(), &Attica::ProviderManager::defaultProvidersLoaded, this, &KNSBackend::startFetchingCategories);
-
-    foreach(const QString& c, cats) {
-        m_categories.insert(c, Attica::Category());
-    }
-
-    m_manager = new KNS3::DownloadManager(m_name, this);
-    connect(m_manager, &KNS3::DownloadManager::searchResult, this, &KNSBackend::receivedEntries);
-    connect(m_manager, &KNS3::DownloadManager::entryStatusChanged, this, &KNSBackend::statusChanged);
-
-    //otherwise this will be executed when defaultProvidersLoaded is emitted
-    if (!m_atticaManager->providers().isEmpty()) {
-        startFetchingCategories();
+    if (m_responsePending) {
+        connect(this, &KNSBackend::availableForQueries, search, &OneTimeAction::trigger, Qt::QueuedConnection);
+    } else {
+        search->trigger();
     }
 }
 
@@ -145,168 +195,115 @@ bool KNSBackend::isValid() const
     return m_isValid;
 }
 
-void KNSBackend::startFetchingCategories()
+KNSResource* KNSBackend::resourceForEntry(const KNSCore::EntryInternal& entry)
 {
-    if (m_atticaManager->providers().isEmpty()) {
-        qWarning() << "no providers for" << m_name;
-        markInvalid();
-        return;
+    KNSResource* r = static_cast<KNSResource*>(m_resourcesByName.value(entry.uniqueId()));
+    if (!r) {
+        r = new KNSResource(entry, m_categories, this);
+        m_resourcesByName.insert(entry.uniqueId(), r);
+    } else {
+        r->setEntry(entry);
     }
-
-    setFetching(true);
-    m_provider = m_atticaManager->providers().first();
-
-    Attica::ListJob<Attica::Category>* job = m_provider.requestCategories();
-    connect(job, &Attica::GetJob::finished, this, &KNSBackend::categoriesLoaded);
-    job->start();
+    return r;
 }
 
-void KNSBackend::categoriesLoaded(Attica::BaseJob* job)
+void KNSBackend::receivedEntries(const KNSCore::EntryInternal::List& entries)
 {
-    if(job->metadata().error() != Attica::Metadata::NoError) {
-        qWarning() << "Network error";
+    m_responsePending = false;
+
+    const auto resources = kTransform<QVector<AbstractResource*>>(entries, [this](const KNSCore::EntryInternal& entry){ return resourceForEntry(entry); });
+    if (!resources.isEmpty()) {
+        Q_EMIT receivedResources(resources);
+    }
+
+    if(resources.isEmpty()) {
+        Q_EMIT searchFinished();
+        Q_EMIT availableForQueries();
         setFetching(false);
         return;
     }
-    Attica::ListJob<Attica::Category>* j = static_cast<Attica::ListJob<Attica::Category>*>(job);
-    Attica::Category::List categoryList = j->itemList();
+//     qDebug() << "received" << objectName() << this << m_resourcesByName.count();
+    if (!m_responsePending && !m_onePage) {
+        // We _have_ to set this first. If we do not, we may run into a situation where the
+        // data request will conclude immediately, causing m_responsePending to remain true
+        // for perpetuity as the slots will be called before the function returns.
+        m_responsePending = true;
+        m_engine->requestMoreData();
+    } else {
+        Q_EMIT availableForQueries();
+    }
+}
 
-    foreach(const Attica::Category& category, categoryList) {
-        if (m_categories.contains(category.name())) {
-//             qDebug() << "Adding category: " << category.name();
-            m_categories[category.name()] = category;
+void KNSBackend::statusChanged(const KNSCore::EntryInternal& entry)
+{
+    resourceForEntry(entry);
+}
+
+class KNSTransaction : public Transaction
+{
+public:
+    KNSTransaction(QObject* parent, KNSResource* res, Transaction::Role role)
+        : Transaction(parent, res, role)
+        , m_id(res->entry().uniqueId())
+    {
+        setCancellable(false);
+
+        auto manager = res->knsBackend()->engine();
+        connect(manager, &KNSCore::Engine::signalEntryChanged, this, &KNSTransaction::anEntryChanged);
+        TransactionModel::global()->addTransaction(this);
+    }
+
+    void anEntryChanged(const KNSCore::EntryInternal& entry) {
+        if (entry.uniqueId() == m_id) {
+            switch (entry.status()) {
+                case KNS3::Entry::Invalid:
+                    qWarning() << "invalid status for" << entry.uniqueId() << entry.status();
+                    break;
+                case KNS3::Entry::Installing:
+                case KNS3::Entry::Updating:
+                    setStatus(CommittingStatus);
+                    break;
+                case KNS3::Entry::Downloadable:
+                case KNS3::Entry::Installed:
+                case KNS3::Entry::Deleted:
+                case KNS3::Entry::Updateable:
+                    if (status() != DoneStatus) {
+                        setStatus(DoneStatus);
+                    }
+                    break;
+            }
         }
     }
-    
-    // Remove categories for which we got no matching category from the provider.
-    // Otherwise we'll fetch an empty category specificier which can return
-    // everything and the kitchen sink if the remote provider feels like it.
-    for (auto it = m_categories.begin(); it != m_categories.end();) {
-        if (!it.value().isValid()) {
-            qWarning() << "Found invalid category" << it.key();
-            it = m_categories.erase(it);
-        } else
-            ++it;
-    }
-    if (m_categories.isEmpty()) {
-        markInvalid();
-        return;
-    }
 
-    Attica::ListJob<Attica::Content>* jj =
-        m_provider.searchContents(m_categories.values(), QString(), Attica::Provider::Alphabetical, m_page, 100);
-    connect(jj, &Attica::GetJob::finished, this, &KNSBackend::receivedContents);
-    jj->start();
+    void cancel() override {}
+
+private:
+    const QString m_id;
+};
+
+Transaction* KNSBackend::removeApplication(AbstractResource* app)
+{
+    auto res = qobject_cast<KNSResource*>(app);
+    auto t = new KNSTransaction(this, res, Transaction::RemoveRole);
+    m_engine->uninstall(res->entry());
+    return t;
 }
 
-void KNSBackend::receivedContents(Attica::BaseJob* job)
+Transaction* KNSBackend::installApplication(AbstractResource* app)
 {
-    if(job->metadata().error() != Attica::Metadata::NoError) {
-        qWarning() << "Network error";
-        setFetching(false);
-        return;
-    }
-    Attica::ListJob<Attica::Content>* listJob = static_cast<Attica::ListJob<Attica::Content>*>(job);
-    Attica::Content::List contents = listJob->itemList();
-    
-    if(contents.isEmpty()) {
-        m_page = 0;
-        m_manager->search();
-        return;
-    }
-    QString filename = QFileInfo(m_name).fileName();
-    foreach(const Attica::Content& c, contents) {
-        KNSResource* r = new KNSResource(c, filename, m_iconName, this);
-        m_resourcesByName.insert(c.id(), r);
-        connect(r, &KNSResource::stateChanged, this, &KNSBackend::updatesCountChanged);
-    }
-    m_page++;
-    Attica::ListJob<Attica::Content>* jj =
-        m_provider.searchContents(m_categories.values(), QString(), Attica::Provider::Alphabetical, m_page, 100);
-    connect(jj, &Attica::GetJob::finished, this, &KNSBackend::receivedContents);
-    jj->start();
+    auto res = qobject_cast<KNSResource*>(app);
+    m_engine->install(res->entry());
+    return new KNSTransaction(this, res, Transaction::InstallRole);
 }
 
-void KNSBackend::receivedEntries(const KNS3::Entry::List& entries)
+Transaction* KNSBackend::installApplication(AbstractResource* app, const AddonList& /*addons*/)
 {
-    if(entries.isEmpty()) {
-        setFetching(false);
-        return;
-    }
-    
-    foreach(const KNS3::Entry& entry, entries) {
-        statusChanged(entry);
-    }
-    ++m_page;
-    m_manager->search(m_page);
-}
-
-void KNSBackend::statusChanged(const KNS3::Entry& entry)
-{
-    KNSResource* r = qobject_cast<KNSResource*>(m_resourcesByName.value(entry.id()));
-    if(r)
-        r->setEntry(entry);
-    else
-        qWarning() << "unknown entry changed" << entry.id() << entry.name();
-}
-
-void KNSBackend::cancelTransaction(AbstractResource* app)
-{
-    Q_UNUSED(app)
-
-    qWarning("KNS transaction canceling unsupported");
-}
-
-void KNSBackend::removeApplication(AbstractResource* app)
-{
-    Transaction* t = new Transaction(this, app, Transaction::RemoveRole);
-    TransactionModel *transModel = TransactionModel::global();
-    transModel->addTransaction(t);
-    KNSResource* r = qobject_cast<KNSResource*>(app);
-    Q_ASSERT(r->entry());
-    m_manager->uninstallEntry(*r->entry());
-    transModel->removeTransaction(t);
-}
-
-void KNSBackend::installApplication(AbstractResource* app)
-{
-    Transaction* t = new Transaction(this, app, Transaction::InstallRole);
-    TransactionModel *transModel = TransactionModel::global();
-    transModel->addTransaction(t);
-    KNSResource* r = qobject_cast<KNSResource*>(app);
-    Q_ASSERT(r->entry());
-    m_manager->installEntry(*r->entry());
-    transModel->removeTransaction(t);
-}
-
-void KNSBackend::installApplication(AbstractResource* app, const AddonList&)
-{
-    installApplication(app);
-}
-
-AbstractResource* KNSBackend::resourceByPackageName(const QString& name) const
-{
-    return m_resourcesByName[name];
+    return installApplication(app);
 }
 
 int KNSBackend::updatesCount() const
 {
-    int ret = 0;
-    foreach(AbstractResource* r, m_resourcesByName) {
-        if(r->state()==AbstractResource::Upgradeable)
-            ++ret;
-    }
-    return ret;
-}
-
-QList<AbstractResource*> KNSBackend::upgradeablePackages() const
-{
-    QList<AbstractResource*> ret;
-    foreach(AbstractResource* r, m_resourcesByName) {
-        if(r->state()==AbstractResource::Upgradeable)
-            ret+=r;
-    }
-    return ret;
+    return m_updater->updatesCount();
 }
 
 AbstractReviewsBackend* KNSBackend::reviewsBackend() const
@@ -314,19 +311,91 @@ AbstractReviewsBackend* KNSBackend::reviewsBackend() const
     return m_reviews;
 }
 
-QList<AbstractResource*> KNSBackend::searchPackageName(const QString& searchText)
+static ResultsStream* voidStream()
 {
-    QList<AbstractResource*> ret;
-    foreach(AbstractResource* r, m_resourcesByName) {
-        if(r->name().contains(searchText, Qt::CaseInsensitive) || r->comment().contains(searchText, Qt::CaseInsensitive))
-            ret += r;
-    }
-    return ret;
+    return new ResultsStream(QStringLiteral("KNS-void"), {});
 }
 
-QVector< AbstractResource* > KNSBackend::allResources() const
+ResultsStream* KNSBackend::search(const AbstractResourcesBackend::Filters& filter)
 {
-    return m_resourcesByName.values().toVector();
+    if (!m_isValid || (!filter.resourceUrl.isEmpty() && filter.resourceUrl.scheme() != QLatin1String("kns")) || !filter.mimetype.isEmpty())
+        return voidStream();
+
+    if (filter.resourceUrl.scheme() == QLatin1String("kns")) {
+        return findResourceByPackageName(filter.resourceUrl);
+    } else if (filter.state >= AbstractResource::Installed) {
+        QVector<AbstractResource*> ret;
+        foreach(AbstractResource* r, m_resourcesByName) {
+            if(r->state()>=filter.state && (r->name().contains(filter.search, Qt::CaseInsensitive) || r->comment().contains(filter.search, Qt::CaseInsensitive)))
+                ret += r;
+        }
+        return new ResultsStream(QStringLiteral("KNS-installed"), ret);
+    } else if (filter.category && filter.category->matchesCategoryName(m_categories.constFirst())) {
+        return searchStream(filter.search);
+    } else if (!filter.category && !filter.search.isEmpty()) {
+        return searchStream(filter.search);
+    }
+    return voidStream();
+}
+
+ResultsStream* KNSBackend::searchStream(const QString &searchText)
+{
+    Q_EMIT startingSearch();
+
+    auto stream = new ResultsStream(QStringLiteral("KNS-search-")+name());
+    auto start = [this, stream, searchText]() {
+        // No need to explicitly launch a search, setting the search term already does that for us
+        m_engine->setSearchTerm(searchText);
+        m_onePage = false;
+        m_responsePending = true;
+
+        connect(this, &KNSBackend::receivedResources, stream, &ResultsStream::resourcesFound);
+        connect(this, &KNSBackend::searchFinished, stream, &ResultsStream::finish);
+        connect(this, &KNSBackend::startingSearch, stream, &ResultsStream::finish);
+    };
+
+    if (m_responsePending) {
+        connect(this, &KNSBackend::availableForQueries, stream, start, Qt::QueuedConnection);
+    } else {
+        start();
+    }
+    return stream;
+}
+
+ResultsStream * KNSBackend::findResourceByPackageName(const QUrl& search)
+{
+    if (search.scheme() != QLatin1String("kns") || search.host() != name())
+        return voidStream();
+
+    const auto pathParts = search.path().split(QLatin1Char('/'), QString::SkipEmptyParts);
+    if (pathParts.size() != 2) {
+        passiveMessage(i18n("Wrong KNewStuff URI: %1", search.toString()));
+        return voidStream();
+    }
+    const auto providerid = pathParts.at(0);
+    const auto entryid = pathParts.at(1);
+
+    auto stream = new ResultsStream(QStringLiteral("KNS-byname-")+entryid);
+    auto start = [this, entryid, stream, providerid]() {
+        m_responsePending = true;
+        m_engine->fetchEntryById(entryid);
+        m_onePage = false;
+        connect(m_engine, &KNSCore::Engine::signalError, stream, &ResultsStream::finish);
+        connect(m_engine, &KNSCore::Engine::signalEntryDetailsLoaded, stream, [this, stream, entryid, providerid](const KNSCore::EntryInternal &entry) {
+            if (entry.uniqueId() == entryid && providerid == QUrl(entry.providerId()).host()) {
+                stream->resourcesFound({resourceForEntry(entry)});
+            }
+            m_responsePending = false;
+            QTimer::singleShot(0, this, &KNSBackend::availableForQueries);
+            stream->finish();
+        });
+    };
+    if (m_responsePending) {
+        connect(this, &KNSBackend::availableForQueries, stream, start);
+    } else {
+        start();
+    }
+    return stream;
 }
 
 bool KNSBackend::isFetching() const
@@ -337,6 +406,11 @@ bool KNSBackend::isFetching() const
 AbstractBackendUpdater* KNSBackend::backendUpdater() const
 {
     return m_updater;
+}
+
+QString KNSBackend::displayName() const
+{
+    return QStringLiteral("KNewStuff");
 }
 
 #include "KNSBackend.moc"

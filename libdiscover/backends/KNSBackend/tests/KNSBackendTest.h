@@ -22,10 +22,13 @@
 #define KNSBACKENDTEST_H
 
 #include <QtCore/QObject>
+#include <QtCore/QPointer>
+#include "ReviewsBackend/ReviewsModel.h"
 
 class AbstractResourcesBackend;
 class AbstractResource;
-class Review;
+class ResultsStream;
+class Category;
 
 class KNSBackendTest : public QObject
 {
@@ -34,17 +37,19 @@ class KNSBackendTest : public QObject
         explicit KNSBackendTest(QObject* parent = nullptr);
 
     private Q_SLOTS:
-        void wrongBackend();
         void testRetrieval();
         void testReviews();
+        void testResourceByUrl();
 
     public Q_SLOTS:
-        void reviewsArrived(AbstractResource *r, const QList<Review *>& revs);
+        void reviewsArrived(AbstractResource *r, const QVector<ReviewPtr>& revs);
 
     private:
-        AbstractResourcesBackend* m_backend;
-        AbstractResource* m_r;
-        QList<Review*> m_revs;
+        QVector<AbstractResource*> getResources(ResultsStream* stream);
+        QVector<AbstractResource*> getAllResources(AbstractResourcesBackend* backend);
+        QPointer<AbstractResourcesBackend> m_backend;
+        QPointer<AbstractResource> m_r;
+        QVector<ReviewPtr> m_revs;
 };
 
 #endif // KNSBACKENDTEST_H

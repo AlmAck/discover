@@ -30,29 +30,27 @@ class DISCOVERCOMMON_EXPORT Rating : public QObject
 {
 Q_OBJECT
 Q_PROPERTY(double sortableRating READ sortableRating CONSTANT)
-Q_PROPERTY(int rating READ rating CONSTANT)
+Q_PROPERTY(float rating READ rating CONSTANT)
 Q_PROPERTY(int ratingPoints READ ratingPoints CONSTANT)
 Q_PROPERTY(quint64 ratingCount READ ratingCount CONSTANT)
 public:
-    explicit Rating(const QVariantMap &data);
-    explicit Rating(const QString& packageName, int ratingCount, int rating, const QString& histogram);
-    explicit Rating(const QString& packageName, QStringList histogram);
-    ~Rating();
+    explicit Rating(const QString &packageName, quint64 ratingCount, const QVariantMap &data);
+    explicit Rating(const QString &packageName, quint64 ratingCount, double rating, const QString &histogram);
+    explicit Rating(QString packageName, int inst);
+    ~Rating() override;
 
     QString packageName() const;
     quint64 ratingCount() const;
-    // 0.0 - 10.0 ranged rating multiplied by two and rounded for KRating*
-    Q_SCRIPTABLE int rating() const;
+    // 0.0 - 10.0 ranged rating
+    float rating() const;
     int ratingPoints() const;
     // Returns a dampened rating calculated with the Wilson Score Interval algorithm
     double sortableRating() const;
 
 private:
-    void init(const QString& packageName, int ratingCount, int rating, const QString& histogram);
-    void debInit(const QString& packageName, QStringList histogram);
-    QString m_packageName;
-    quint64 m_ratingCount;
-    int m_rating;
+    const QString m_packageName;
+    const quint64 m_ratingCount;
+    const float m_rating;
     int m_ratingPoints;
     double m_sortableRating;
 };

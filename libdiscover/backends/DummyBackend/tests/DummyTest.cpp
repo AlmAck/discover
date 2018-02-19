@@ -19,15 +19,18 @@
  ***************************************************************************/
 
 #include "DummyTest.h"
+#include "DiscoverBackendsFactory.h"
 #include <resources/ResourcesUpdatesModel.h>
 #include <UpdateModel/UpdateModel.h>
-#include <modeltest.h>
+#include <tests/modeltest.h>
 #include <resources/ResourcesModel.h>
 #include <resources/ResourcesProxyModel.h>
 #include <resources/AbstractBackendUpdater.h>
 #include <ApplicationAddonsModel.h>
 #include <Transaction/TransactionModel.h>
 #include <ReviewsBackend/ReviewsModel.h>
+#include <ScreenshotsModel.h>
+#include <Category/CategoryModel.h>
 #include <qtest.h>
 
 #include <QtTest>
@@ -48,13 +51,15 @@ AbstractResourcesBackend* backendByName(ResourcesModel* m, const QString& name)
 
 DummyTest::DummyTest(QObject* parent): QObject(parent)
 {
-    m_model = new ResourcesModel(QStringLiteral("dummy-backend"), this);
-    new ModelTest(m_model, m_model);
+    DiscoverBackendsFactory::setRequestedBackends({ QStringLiteral("dummy-backend") });
 
+    m_model = new ResourcesModel(QStringLiteral("dummy-backend"), this);
     m_appBackend = backendByName(m_model, QStringLiteral("DummyBackend"));
+
+    CategoryModel::global()->populateCategories();
 }
 
-void DummyTest::init()
+void DummyTest::initTestCase()
 {
     QVERIFY(m_appBackend);
     while(m_appBackend->isFetching()) {
@@ -63,55 +68,105 @@ void DummyTest::init()
     }
 }
 
+QVector<AbstractResource*> fetchResources(ResultsStream* stream)
+{
+    QVector<AbstractResource*> ret;
+    QObject::connect(stream, &ResultsStream::resourcesFound, stream, [&ret](const QVector<AbstractResource*>& res) { ret += res; });
+    QSignalSpy spy(stream, &ResultsStream::destroyed);
+    Q_ASSERT(spy.wait());
+    return ret;
+}
+
 void DummyTest::testReadData()
 {
+    const auto resources = fetchResources(m_appBackend->search({}));
+
+    QCOMPARE(m_appBackend->property("startElements").toInt()*2, resources.size());
     QBENCHMARK {
-        for(int i=0, c=m_model->rowCount(); i<c; i++) {
-            QModelIndex idx = m_model->index(i, 0);
-            QVERIFY(!m_model->data(idx, ResourcesModel::NameRole).isNull());
+        for(AbstractResource* res: resources) {
+            QVERIFY(!res->name().isEmpty());
         }
-        QCOMPARE(m_appBackend->property("startElements").toInt()*2, m_model->rowCount());
     }
 }
 
 void DummyTest::testProxy()
 {
     ResourcesProxyModel pm;
-    pm.setSourceModel(m_model);
-    QCOMPARE(m_appBackend->property("startElements").toInt(), pm.rowCount());
-    pm.setShouldShowTechnical(true);
+    QSignalSpy spy(&pm, &ResourcesProxyModel::busyChanged);
+//     QVERIFY(spy.wait());
+    QVERIFY(!pm.isBusy());
+
+    pm.setFiltersFromCategory(CategoryModel::global()->rootCategories().first());
+    pm.componentComplete();
+    QVERIFY(pm.isBusy());
+    QVERIFY(spy.wait());
+    QVERIFY(!pm.isBusy());
+
     QCOMPARE(m_appBackend->property("startElements").toInt()*2, pm.rowCount());
     pm.setSearch(QStringLiteral("techie"));
+    QVERIFY(pm.isBusy());
+    QVERIFY(spy.wait());
+    QVERIFY(!pm.isBusy());
     QCOMPARE(m_appBackend->property("startElements").toInt(), pm.rowCount());
+    QCOMPARE(pm.subcategories().count(), 7);
     pm.setSearch(QString());
+    QVERIFY(pm.isBusy());
+    QVERIFY(spy.wait());
+    QVERIFY(!pm.isBusy());
     QCOMPARE(m_appBackend->property("startElements").toInt()*2, pm.rowCount());
+}
+
+void DummyTest::testProxySorting()
+{
+    ResourcesProxyModel pm;
+    QSignalSpy spy(&pm, &ResourcesProxyModel::busyChanged);
+//     QVERIFY(spy.wait());
+    QVERIFY(!pm.isBusy());
+
+    pm.setFiltersFromCategory(CategoryModel::global()->rootCategories().first());
+    pm.setSortOrder(Qt::DescendingOrder);
+    pm.setSortRole(ResourcesProxyModel::RatingCountRole);
+    pm.componentComplete();
+    QVERIFY(pm.isBusy());
+    QVERIFY(spy.wait());
+    QVERIFY(!pm.isBusy());
+
+    QCOMPARE(m_appBackend->property("startElements").toInt()*2, pm.rowCount());
+    QVariant lastRatingCount;
+    for(int i=0, rc=pm.rowCount(); i<rc; ++i) {
+        const QModelIndex mi = pm.index(i, 0);
+
+        const auto value = mi.data(pm.sortRole());
+        QVERIFY(i==0 || value <= lastRatingCount);
+        lastRatingCount = value;
+    }
 }
 
 void DummyTest::testFetch()
 {
-    QCOMPARE(m_appBackend->property("startElements").toInt()*2, m_model->rowCount());
+    const auto resources = fetchResources(m_appBackend->search({}));
+    QCOMPARE(m_appBackend->property("startElements").toInt()*2, resources.count());
 
     //fetches updates, adds new things
-    m_appBackend->messageActions().at(0)->trigger();
-    QCOMPARE(m_model->rowCount(), 0);
-    QCOMPARE(m_model->isFetching(), true);
+    m_appBackend->checkForUpdates();
     QSignalSpy spy(m_model, SIGNAL(allInitialized()));
     QVERIFY(spy.wait(80000));
-    QCOMPARE(m_model->isFetching(), false);
-    QCOMPARE(m_appBackend->property("startElements").toInt()*4, m_model->rowCount());
+    auto resources2 = fetchResources(m_appBackend->search({}));
+    QCOMPARE(m_appBackend->property("startElements").toInt()*4, resources2.count());
 }
 
 void DummyTest::testSort()
 {
     ResourcesProxyModel pm;
-    pm.setSourceModel(m_model);
+
     QCollator c;
     QBENCHMARK_ONCE {
-        pm.setSortRole(ResourcesModel::NameRole);
+        pm.setSortRole(ResourcesProxyModel::NameRole);
         pm.sort(0);
+        QCOMPARE(pm.sortOrder(), Qt::AscendingOrder);
         QString last;
-        for(int i = 0; i<pm.rowCount(); ++i) {
-            QString current = pm.index(i, 0).data(pm.sortRole()).toString();
+        for(int i = 0, count = pm.rowCount(); i<count; ++i) {
+            const QString current = pm.index(i, 0).data(pm.sortRole()).toString();
             if (!last.isEmpty()) {
                 QCOMPARE(c.compare(last, current), -1);
             }
@@ -120,11 +175,10 @@ void DummyTest::testSort()
     }
 
     QBENCHMARK_ONCE {
-        pm.setSortRole(ResourcesModel::SortableRatingRole);
-        pm.sort(0);
+        pm.setSortRole(ResourcesProxyModel::SortableRatingRole);
         int last=-1;
-        for(int i = 0; i<pm.rowCount(); ++i) {
-            int current = pm.index(i, 0).data(pm.sortRole()).toInt();
+        for(int i = 0, count = pm.rowCount(); i<count; ++i) {
+            const int current = pm.index(i, 0).data(pm.sortRole()).toInt();
             QVERIFY(last<=current);
             last = current;
         }
@@ -133,10 +187,13 @@ void DummyTest::testSort()
 
 void DummyTest::testInstallAddons()
 {
-    AbstractResource* res = m_model->resourceByPackageName(QStringLiteral("Dummy 1"));
+    const auto resources = fetchResources(m_appBackend->findResourceByPackageName(QUrl(QStringLiteral("dummy://Dummy.1"))));
+    QCOMPARE(resources.count(), 1);
+    AbstractResource* res = resources.first();
     QVERIFY(res);
 
     ApplicationAddonsModel m;
+    new ModelTest(&m, &m);
     m.setApplication(res);
     QCOMPARE(m.rowCount(), res->addonsInformation().count());
     QCOMPARE(res->addonsInformation().at(0).isInstalled(), false);
@@ -146,18 +203,30 @@ void DummyTest::testInstallAddons()
     QVERIFY(m.hasChanges());
 
     m.applyChanges();
-    QSignalSpy sR(TransactionModel::global(), SIGNAL(transactionRemoved(Transaction* )));
+    QSignalSpy sR(TransactionModel::global(), &TransactionModel::transactionRemoved);
     QVERIFY(sR.wait());
     QVERIFY(!m.hasChanges());
 
     QCOMPARE(m.data(m.index(0,0)).toString(), firstAddonName);
     QCOMPARE(res->addonsInformation().at(0).name(), firstAddonName);
     QCOMPARE(res->addonsInformation().at(0).isInstalled(), true);
+
+    m.changeState(m.data(m.index(1,0)).toString(), true);
+    QVERIFY(m.hasChanges());
+    for(int i=0, c=m.rowCount(); i<c; ++i) {
+        const auto idx = m.index(i, 0);
+        QCOMPARE(idx.data(Qt::CheckStateRole).toInt(), int(i<=1 ? Qt::Checked : Qt::Unchecked));
+        QVERIFY(!idx.data(ApplicationAddonsModel::PackageNameRole).toString().isEmpty());
+    }
+    m.discardChanges();
+    QVERIFY(!m.hasChanges());
 }
 
 void DummyTest::testReviewsModel()
 {
-    AbstractResource* res = m_model->resourceByPackageName(QStringLiteral("Dummy 1"));
+    const auto resources = fetchResources(m_appBackend->findResourceByPackageName(QUrl(QStringLiteral("dummy://Dummy.1"))));
+    QCOMPARE(resources.count(), 1);
+    AbstractResource* res = resources.first();
     QVERIFY(res);
 
     ReviewsModel m;
@@ -173,7 +242,9 @@ void DummyTest::testReviewsModel()
     m.markUseful(0, false);
     QCOMPARE(ReviewsModel::UserChoice(m.data(m.index(0,0), ReviewsModel::UsefulChoice).toInt()), ReviewsModel::No);
 
-    res = m_model->resourceByPackageName(QStringLiteral("Dummy 2"));
+    const auto resources2 = fetchResources(m_appBackend->findResourceByPackageName(QUrl(QStringLiteral("dummy://Dummy.1"))));
+    QCOMPARE(resources2.count(), 1);
+    res = resources2.first();
     m.setResource(res);
     m.fetchMore();
 
@@ -183,12 +254,36 @@ void DummyTest::testReviewsModel()
 
 void DummyTest::testUpdateModel()
 {
+    const auto backend = m_model->backends().first();
+
     ResourcesUpdatesModel ruModel;
     new ModelTest(&ruModel, &ruModel);
     UpdateModel model;
     new ModelTest(&model, &model);
     model.setBackend(&ruModel);
 
-    QCOMPARE(model.rowCount(), 2);
+    QCOMPARE(model.rowCount(), 4*backend->property("startElements").toInt()/3);
     QCOMPARE(model.hasUpdates(), true);
 }
+
+void DummyTest::testScreenshotsModel()
+{
+    ScreenshotsModel m;
+    new ModelTest(&m, &m);
+
+    const auto resources = fetchResources(m_appBackend->findResourceByPackageName(QUrl(QStringLiteral("dummy://Dummy.1"))));
+    QCOMPARE(resources.count(), 1);
+    AbstractResource* res = resources.first();
+    QVERIFY(res);
+    m.setResource(res);
+    QCOMPARE(res, m.resource());
+
+    int c=m.rowCount();
+    for(int i=0; i<c; ++i) {
+        const auto idx = m.index(i, 0);
+        QVERIFY(!idx.data(ScreenshotsModel::ThumbnailUrl).isNull());
+        QVERIFY(!idx.data(ScreenshotsModel::ScreenshotUrl).isNull());
+    }
+}
+
+//TODO test cancel transaction

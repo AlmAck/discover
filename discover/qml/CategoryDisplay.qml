@@ -20,150 +20,20 @@
 import QtQuick 2.1
 import QtQuick.Controls 1.1
 import QtQuick.Layouts 1.1
-import org.kde.discover 1.0
+import org.kde.discover 2.0
+import org.kde.discover.app 1.0
 import org.kde.kquickcontrolsaddons 2.0
 import "navigation.js" as Navigation
+import org.kde.kirigami 2.0 as Kirigami
 
-ConditionalLoader
-{
-    id: page
+PageHeader {
+    id: header
     property QtObject category: null
-    property real spacing: 3
-    property real maxtopwidth: 250
+    Layout.fillWidth: true
+    backgroundImage.source: category ? category.decoration : "qrc:/banners/coffee.jpg"
 
-    CategoryModel {
-        id: categoryModel
-        displayedCategory: page.category
-    }
-
-    condition: !app.isCompact
-    componentTrue: RowLayout {
-            id: gridRow
-            readonly property bool extended: view.count>5
-            spacing: page.spacing
-
-            ApplicationsTop {
-                id: top
-                Layout.fillHeight: true
-                Layout.fillWidth: true
-                sortRole: "sortableRating"
-                filteredCategory: categoryModel.displayedCategory
-                title: i18n("Most Popular")
-                extended: gridRow.extended
-                roleDelegate: Item {
-                    width: bg.width
-                    implicitWidth: bg.implicitWidth
-                    property variant model
-                    LabelBackground {
-                        id: bg
-                        anchors.centerIn: parent
-                        text: model.sortableRating.toFixed(2)
-                    }
-                }
-                Layout.preferredWidth: page.maxtopwidth
-            }
-            ApplicationsTop {
-                id: top2
-                Layout.preferredWidth: page.maxtopwidth
-                Layout.fillHeight: true
-                Layout.fillWidth: true
-                sortRole: "ratingPoints"
-                filteredCategory: categoryModel.displayedCategory
-                title: i18n("Best Rating")
-                extended: gridRow.extended
-                roleDelegate: Rating {
-                    property variant model
-                    rating: model.rating
-                    starSize: parent.height/3
-                }
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.preferredWidth: page.maxtopwidth*2+page.spacing
-                Layout.maximumHeight: top.height
-
-                spacing: -1
-
-                Label {
-                    text: i18n("Categories")
-                    Layout.fillWidth: true
-                    font.weight: Font.Bold
-                    Layout.minimumHeight: paintedHeight*1.5
-                    visible: view.count>0
-                }
-
-                CategoryView {
-                    id: view
-                    visible: view.count>0
-                    model: categoryModel
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                }
-            }
-        }
-
-    componentFalse: ColumnLayout {
-            Layout.minimumHeight: 5000
-            spacing: -1
-
-            ApplicationsTop {
-                id: top
-                Layout.fillHeight: true
-                Layout.fillWidth: true
-                sortRole: "sortableRating"
-                filteredCategory: categoryModel.displayedCategory
-                title: i18n("Most Popular")
-                roleDelegate: Item {
-                    property variant model
-                    width: bg.width
-                    implicitWidth: bg.implicitWidth
-                    LabelBackground {
-                        id: bg
-                        anchors.centerIn: parent
-                        text: model.sortableRating.toFixed(2)
-                    }
-                }
-            }
-            Item { height: 3; width: 3 }
-            Label {
-                text: i18n("Categories")
-                Layout.fillWidth: true
-                font.weight: Font.Bold
-                Layout.minimumHeight: paintedHeight*1.5
-                visible: view.count>0
-            }
-
-            Repeater {
-                id: view
-                Layout.fillWidth: true
-                model: categoryModel
-
-                delegate: GridItem {
-                    height: label.implicitHeight*3
-                    Layout.fillWidth: true
-
-                    RowLayout {
-                        anchors.fill: parent
-                        id: layout
-                        QIconItem {
-                            icon: decoration
-                            Layout.fillHeight: true
-                            Layout.preferredWidth: label.implicitHeight*3
-                            Layout.preferredHeight: width
-                        }
-                        Label {
-                            id: label
-                            text: display
-                            Layout.fillWidth: true
-                            wrapMode: Text.WordWrap
-
-                            maximumLineCount: 2
-                        }
-                    }
-                    onClicked: Navigation.openCategory(category)
-                }
-            }
+    Item {
+        Layout.fillWidth: true
+        height: Kirigami.Units.largeSpacing
     }
 }

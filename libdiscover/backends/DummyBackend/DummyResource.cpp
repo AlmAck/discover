@@ -25,38 +25,26 @@
 #include <QStringList>
 #include <QTimer>
 
-Q_GLOBAL_STATIC(QVector<QString>, s_icons)
+Q_GLOBAL_STATIC_WITH_ARGS(QVector<QString>, s_icons, ({ QLatin1String("kdevelop"), QLatin1String("kalgebra"), QLatin1String("kmail"), QLatin1String("akregator"), QLatin1String("korganizer") }))
 
-DummyResource::DummyResource(QString  name, bool isTechnical, AbstractResourcesBackend* parent)
+DummyResource::DummyResource(QString name, bool isTechnical, AbstractResourcesBackend* parent)
     : AbstractResource(parent)
     , m_name(std::move(name))
     , m_state(State::Broken)
+    , m_iconName((*s_icons)[KRandom::random() % s_icons->size()])
     , m_addons({ PackageState(QStringLiteral("a"), QStringLiteral("aaaaaa"), false), PackageState(QStringLiteral("b"), QStringLiteral("aaaaaa"), false), PackageState(QStringLiteral("c"), QStringLiteral("aaaaaa"), false)})
     , m_isTechnical(isTechnical)
 {
-    if(KRandom::random() % 2) {
-        m_screenshot = QUrl(QStringLiteral("http://screenshots.debian.net/screenshots/d/dolphin/9383_large.png"));
-        m_screenshotThumbnail = QUrl(QStringLiteral("http://screenshots.debian.net/screenshots/d/dolphin/9383_small.png"));
-    }
-    if (s_icons->isEmpty()) {
-        * s_icons = { QStringLiteral("kdevelop"), QStringLiteral("kalgebra"), QStringLiteral("kmail"), QStringLiteral("akregator"), QStringLiteral("korganizer") };
-    }
-    m_iconName = (*s_icons)[KRandom::random() % s_icons->size()];
-
-//     if((KRandom::random() % 100) == 0) {
-//         enableStateChanges();
-//     }
+    const int nofScreenshots = KRandom::random() % 5;
+    m_screenshots = QList<QUrl>{
+        QUrl(QStringLiteral("http://screenshots.debian.net/screenshots/000/014/863/large.png")),
+        QUrl(QStringLiteral("https://c2.staticflickr.com/6/5656/21772158034_dc84382527_o.jpg")),
+        QUrl(QStringLiteral("https://c1.staticflickr.com/9/8479/8166397343_b78106f353_k.jpg")),
+        QUrl(QStringLiteral("https://c2.staticflickr.com/4/3685/9954407993_dad10a6943_k.jpg")),
+        QUrl(QStringLiteral("https://c1.staticflickr.com/1/653/22527103378_8ce572e1de_k.jpg"))
+    }.mid(nofScreenshots);
+    m_screenshotThumbnails = m_screenshots;
 }
-
-void DummyResource::enableStateChanges()
-{
-    QTimer* t = new QTimer(this);
-    t->setSingleShot(false);
-    t->setInterval(500);
-    connect(t, &QTimer::timeout, this, [this](){ int s = (m_state+1) % 4; setState(State(s)); });
-    t->start();
-}
-
 
 QList<PackageState> DummyResource::addonsInformation()
 {
@@ -70,7 +58,7 @@ QString DummyResource::availableVersion() const
 
 QStringList DummyResource::categories()
 {
-    return QStringList(QStringLiteral("dummy"));
+    return { QStringLiteral("dummy"), m_name.endsWith(QLatin1Char('3')) ? QStringLiteral("three") : QStringLiteral("notthree") };
 }
 
 QString DummyResource::comment()
@@ -80,7 +68,7 @@ QString DummyResource::comment()
 
 int DummyResource::size()
 {
-    return 123;
+    return m_size;
 }
 
 QUrl DummyResource::homepage()
@@ -88,7 +76,22 @@ QUrl DummyResource::homepage()
     return QUrl(QStringLiteral("http://kde.org"));
 }
 
-QString DummyResource::icon() const
+QUrl DummyResource::helpURL()
+{
+    return QUrl(QStringLiteral("http://very-very-excellent-docs.lol"));
+}
+
+QUrl DummyResource::bugURL()
+{
+    return QUrl(QStringLiteral("file:///dev/null"));
+}
+
+QUrl DummyResource::donationURL()
+{
+    return QUrl(QStringLiteral("https://youtu.be/0o8XMlL8rqY"));
+}
+
+QVariant DummyResource::icon() const
 {
     return isTechnical() ? QStringLiteral("kalarm") : m_iconName;
 }
@@ -131,16 +134,6 @@ QString DummyResource::packageName() const
     return m_name;
 }
 
-QUrl DummyResource::screenshotUrl()
-{
-    return m_screenshot;
-}
-
-QUrl DummyResource::thumbnailUrl()
-{
-    return m_screenshotThumbnail;
-}
-
 QString DummyResource::section()
 {
     return QStringLiteral("dummy");
@@ -157,6 +150,11 @@ void DummyResource::fetchChangelog()
     log.replace(QLatin1Char('\n'), QLatin1String("<br />"));
 
     emit changelogFetched(log);
+}
+
+void DummyResource::fetchScreenshots()
+{
+    Q_EMIT screenshotsFetched(m_screenshotThumbnails, m_screenshots);
 }
 
 void DummyResource::setState(AbstractResource::State state)
@@ -189,4 +187,9 @@ void DummyResource::invokeApplication() const
 {
     QDesktopServices d;
     d.openUrl(QUrl(QStringLiteral("https://projects.kde.org/projects/extragear/sysadmin/muon")));
+}
+
+QUrl DummyResource::url() const
+{
+    return QUrl(QLatin1String("dummy://") + packageName().replace(QLatin1Char(' '), QLatin1Char('.')));
 }

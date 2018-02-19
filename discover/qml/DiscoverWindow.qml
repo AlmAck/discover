@@ -1,133 +1,214 @@
-import QtQuick 2.1
+import QtQuick 2.5
 import QtQuick.Layouts 1.1
 import QtQuick.Controls 1.1
+import QtQuick.Controls 2.1 as QQC2
+import org.kde.discover 2.0
+import org.kde.discover.app 1.0
+import org.kde.kirigami 2.2 as Kirigami
 import "navigation.js" as Navigation
 
-ConditionalLoader
+Kirigami.ApplicationWindow
 {
     id: window
-    readonly property Component applicationListComp: Qt.createComponent("qrc:/qml/ApplicationsListPage.qml")
-    readonly property Component applicationComp: Qt.createComponent("qrc:/qml/ApplicationPage.qml")
-    readonly property Component categoryComp: Qt.createComponent("qrc:/qml/ApplicationsListPage.qml")
-    readonly property Component reviewsComp: Qt.createComponent("qrc:/qml/ReviewsPage.qml")
+    readonly property string applicationListComp: ("qrc:/qml/ApplicationsListPage.qml")
+    readonly property string applicationComp: ("qrc:/qml/ApplicationPage.qml")
+    readonly property string reviewsComp: ("qrc:/qml/ReviewsPage.qml")
 
     //toplevels
-    readonly property Component topBrowsingComp: Qt.createComponent("qrc:/qml/BrowsingPage.qml")
-    readonly property Component topInstalledComp: Qt.createComponent("qrc:/qml/InstalledPage.qml")
-    readonly property Component topUpdateComp: Qt.createComponent("qrc:/qml/UpdatesPage.qml")
-    readonly property Component topSourcesComp: Qt.createComponent("qrc:/qml/SourcesPage.qml")
-    readonly property QtObject stack: item.stack
-    property Component currentTopLevel: defaultStartup ? topBrowsingComp : loadingComponent
+    readonly property string topBrowsingComp: ("qrc:/qml/BrowsingPage.qml")
+    readonly property string topInstalledComp: ("qrc:/qml/InstalledPage.qml")
+    readonly property string topSearchComp: ("qrc:/qml/SearchPage.qml")
+    readonly property string topUpdateComp: ("qrc:/qml/UpdatesPage.qml")
+    readonly property string topSourcesComp: ("qrc:/qml/SourcesPage.qml")
+    readonly property string loadingComponent: ("qrc:/qml/LoadingPage.qml")
+    readonly property QtObject stack: window.pageStack
+    property string currentTopLevel: defaultStartup ? topBrowsingComp : loadingComponent
     property bool defaultStartup: true
-    property bool navigationEnabled: true
 
     objectName: "DiscoverMainWindow"
+    title: leftPage ? leftPage.title : ""
+
+    header: Kirigami.ToolBarApplicationHeader {}
+//     header: (window.wideScreen ? desktopHeader : mobileHeader).createObject()
+//
+//     Component { id: desktopHeader; Kirigami.ToolBarApplicationHeader {} }
+//     Component { id: mobileHeader; Kirigami.ApplicationHeader {} }
 
     visible: true
 
-    function clearSearch() {
-//         if (toolbar.search)
-//             toolbar.search.text=""
+    minimumWidth: 300
+    minimumHeight: 300
+
+    pageStack.defaultColumnWidth: Kirigami.Units.gridUnit * 25
+
+    readonly property var leftPage: window.stack.depth>0 ? window.stack.get(0) : null
+
+    Component.onCompleted: {
+        if (app.isRoot)
+            showPassiveNotification(i18n("Running as <em>root</em> is discouraged and unnecessary."));
     }
 
-    Component {
-        id: loadingComponent
-        Item {
-            Label {
-                text: i18n("Loading...")
-                font.pointSize: 52
-                anchors.centerIn: parent
-            }
-        }
+    TopLevelPageData {
+        iconName: "tools-wizard"
+        text: i18n("Discover")
+        component: topBrowsingComp
+        objectName: "discover"
     }
 
-    ExclusiveGroup { id: appTabs }
+    TopLevelPageData {
+        id: searchAction
+        enabled: !window.wideScreen
+        iconName: "search"
+        text: i18n("Search")
+        component: topSearchComp
+        objectName: "discover"
+        shortcut: "Ctrl+F"
+    }
+    TopLevelPageData {
+        id: installedAction
+        text: i18n("Installed")
+        component: topInstalledComp
+        objectName: "installed"
+    }
+    TopLevelPageData {
+        id: updateAction
+        iconName: ResourcesModel.updatesCount>0 ? ResourcesModel.hasSecurityUpdates ? "update-high" : "update-low" : "update-none"
+        text: ResourcesModel.updatesCount<=0 ? (ResourcesModel.isFetching ? i18n("Checking for updates...") : i18n("No Updates") ) : i18nc("Update section name", "Update (%1)", ResourcesModel.updatesCount)
+        component: topUpdateComp
+        objectName: "update"
+    }
+    TopLevelPageData {
+        id: settingsAction
+        iconName: "settings"
+        text: i18n("Settings")
+        component: topSourcesComp
+        objectName: "settings"
+    }
 
-    property list<Action> awesome: [
-        TopLevelPageData {
-            iconName: "tools-wizard"
-            text: i18n("Discover")
-            component: topBrowsingComp
-            objectName: "discover"
-            shortcut: "Alt+D"
-        },
-        TopLevelPageData {
-            iconName: "applications-other"
-            text: TransactionModel.count == 0 ? i18n("Installed") : i18n("Installing...")
-            component: topInstalledComp
-            objectName: "installed"
-            shortcut: "Alt+I"
-        },
-        TopLevelPageData {
-            iconName: "system-software-update"
-            text: ResourcesModel.updatesCount==0 ? i18n("No Updates") : i18n("Update (%1)", ResourcesModel.updatesCount)
-            enabled: ResourcesModel.updatesCount>0
-            component: topUpdateComp
-            objectName: "update"
-            shortcut: "Alt+U"
-        }
-    ]
+    Action {
+        id: refreshAction
+        readonly property QtObject action: ResourcesModel.updateAction
+        text: action.text
+        onTriggered: action.trigger()
+        enabled: action.enabled
+        tooltip: shortcut
+
+        shortcut: "Ctrl+R"
+    }
 
     Connections {
         target: app
-        onOpenApplicationInternal: Navigation.openApplication(app)
-        onListMimeInternal: Navigation.openApplicationMime(mime)
-        onListCategoryInternal: Navigation.openCategory(cat)
-    }
-
-    Menu {
-        id: moreMenu
-        MenuItem { action: ActionBridge { action: app.action("configure_sources"); } }
-        MenuSeparator {}
-        Menu {
-            id: advancedMenu
-            title: i18n("Advanced...")
-
-            Instantiator {
-                model: ResourcesModel.messageActions
-                delegate: MenuItem { action: ActionBridge { action: modelData} }
-
-                onObjectAdded: advancedMenu.insertItem(index, object)
-                onObjectRemoved: advancedMenu.removeItem(object)
-            }
+        onOpenApplicationInternal: {
+            Navigation.clearStack()
+            Navigation.openApplication(app)
         }
-        MenuItem { action: ActionBridge { action: app.action("options_configure_keybinding"); } }
-        MenuItem { action: ActionBridge { action: app.action("help_about_app"); } }
-        MenuItem { action: ActionBridge { action: app.action("help_report_bug"); } }
+        onListMimeInternal:  {
+            currentTopLevel = topBrowsingComp;
+            Navigation.openApplicationMime(mime)
+        }
+        onListCategoryInternal:  {
+            currentTopLevel = topBrowsingComp;
+            Navigation.openCategory(cat, "")
+        }
+
+        onOpenSearch: {
+            Navigation.clearStack()
+            Navigation.openApplicationList({search: search})
+        }
+
+        onPreventedClose: showPassiveNotification(i18n("Could not close the application, there are tasks that need to be done."))
+        onUnableToFind: {
+            showPassiveNotification(i18n("Unable to find resource: %1", resid));
+            Navigation.openHome()
+        }
     }
 
-    condition: app.isCompact
-    componentTrue: Main {
-        id: main
-        property alias stack: main.stack
-        currentTopLevel: window.currentTopLevel
+    Connections {
+        target: ResourcesModel
+        onPassiveMessage: {
+            showPassiveNotification(message)
+            console.log("message:", message)
+        }
+    }
 
-        Loader {
-            anchors.fill: parent
-            source: "qrc:/qml/DiscoverWindow_PlasmaPhone.qml"
-            onStatusChanged: {
-                if (status==Loader.Error) {
-                    console.log("Disabling compact mode. Make sure Plasma Mobile is properly installed");
-                    app.compactMode = "Full";
+    Component {
+        id: proceedDialog
+        Kirigami.OverlaySheet {
+            id: sheet
+            property QtObject transaction
+            property alias title: heading.text
+            property alias description: desc.text
+            property bool acted: false
+            ColumnLayout {
+                Kirigami.Heading {
+                    id: heading
+                }
+                QQC2.Label {
+                    id: desc
+                    Layout.fillWidth: true
+                    textFormat: Text.StyledText
+                    wrapMode: Text.WordWrap
+                }
+                RowLayout {
+                    Layout.alignment: Qt.AlignRight
+                    Button {
+                        text: i18n("Proceed")
+                        iconName: "dialog-ok"
+                        onClicked: {
+                            transaction.proceed()
+                            sheet.acted = true
+                            sheet.close()
+                        }
+                    }
+                    Button {
+                        Layout.alignment: Qt.AlignRight
+                        text: i18n("Cancel")
+                        iconName: "dialog-cancel"
+                        onClicked: {
+                            transaction.cancel()
+                            sheet.acted = true
+                            sheet.close()
+                        }
+                    }
                 }
             }
+            onSheetOpenChanged: if(!sheetOpen) {
+                sheet.destroy(1000)
+                if (!sheet.acted)
+                    transaction.cancel()
+            }
         }
     }
 
-    componentFalse: ColumnLayout {
-        property alias stack: main.stack
-        spacing: 0
-        MuonToolbar {
-            id: toolbar
-            Layout.fillWidth: true
-            visible: !app.isCompact
-        }
+    Instantiator {
+        model: TransactionModel
 
-        Main {
-            id: main
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            currentTopLevel: window.currentTopLevel
+        delegate: Connections {
+            target: model.transaction ? model.transaction : null
+
+            onProceedRequest: {
+                var dialog = proceedDialog.createObject(window, {transaction: transaction, title: title, description: description})
+                dialog.open()
+            }
+            onPassiveMessage: {
+                window.showPassiveNotification(message)
+            }
         }
+    }
+
+    globalDrawer: DiscoverDrawer {
+        wideScreen: window.wideScreen
+    }
+
+    onCurrentTopLevelChanged: {
+        window.pageStack.clear()
+        if (currentTopLevel)
+            window.pageStack.push(currentTopLevel, {}, window.status!=Component.Ready)
+    }
+
+    UnityLauncher {
+        launcherId: "org.kde.discover.desktop"
+        progressVisible: TransactionModel.count > 0
+        progress: TransactionModel.progress
     }
 }

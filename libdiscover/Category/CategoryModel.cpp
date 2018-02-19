@@ -22,78 +22,64 @@
 #include "CategoryModel.h"
 #include "Category.h"
 #include "CategoriesReader.h"
-
-Q_GLOBAL_STATIC_WITH_ARGS(QList<Category*>, s_categories, (CategoriesReader().populateCategories()))
+#include <QDebug>
+#include <QCollator>
+#include <utils.h>
+#include <resources/ResourcesModel.h>
 
 CategoryModel::CategoryModel(QObject* parent)
-    : QStandardItemModel(parent)
-    , m_currentCategory(nullptr)
+    : QObject(parent)
 {
+    connect(ResourcesModel::global(), &ResourcesModel::backendsChanged, this, &CategoryModel::populateCategories);
 }
 
-QHash< int, QByteArray > CategoryModel::roleNames() const
+CategoryModel * CategoryModel::global()
 {
-    QHash< int, QByteArray > names = QAbstractItemModel::roleNames();
-    names[CategoryRole] = "category";
-    return names;
-}
-
-void CategoryModel::setCategories(const QList<Category *> &categoryList, const QString &rootName)
-{
-    clear();
-
-    invisibleRootItem()->removeRows(0, invisibleRootItem()->rowCount());
-    foreach (Category *category, categoryList) {
-        QStandardItem *categoryItem = new QStandardItem;
-        categoryItem->setText(category->name());
-        categoryItem->setIcon(QIcon::fromTheme(category->icon()));
-        categoryItem->setEditable(false);
-        categoryItem->setData(qVariantFromValue<QObject*>(category), CategoryRole);
-        connect(category, &QObject::destroyed, this, &CategoryModel::categoryDeleted);
-
-        appendRow(categoryItem);
+    static CategoryModel *instance = nullptr;
+    if (!instance) {
+        instance = new CategoryModel;
     }
+    return instance;
 }
 
-void CategoryModel::categoryDeleted(QObject* cat)
+void CategoryModel::populateCategories()
 {
-    for(int i=0; i<rowCount(); ++i) {
-        if (cat == item(i)->data(CategoryRole).value<QObject*>()) {
-            removeRow(i);
+    const auto backends = ResourcesModel::global()->backends();
+
+    QVector<Category*> ret;
+    CategoriesReader cr;
+    Q_FOREACH (const auto backend, backends) {
+        const QVector<Category*> cats = cr.loadCategoriesFile(backend);
+
+        if(ret.isEmpty()) {
+            ret = cats;
+        } else {
+            Q_FOREACH (Category* c, cats)
+                Category::addSubcategory(ret, c);
         }
     }
+    if (m_rootCategories != ret) {
+        m_rootCategories = ret;
+        Q_EMIT rootCategoriesChanged();
+    }
 }
 
-Category* CategoryModel::categoryForRow(int row)
+QVariantList CategoryModel::rootCategoriesVL() const
 {
-    return qobject_cast<Category*>(item(row)->data(CategoryRole).value<QObject*>());
+    return kTransform<QVariantList>(m_rootCategories, [](Category* cat) {return qVariantFromValue<QObject*>(cat); });
 }
 
-void CategoryModel::setDisplayedCategory(Category* c)
+void CategoryModel::blacklistPlugin(const QString &name)
 {
-    if (m_currentCategory == c && (c || rowCount()>0))
-        return;
-
-    m_currentCategory = c;
-    if(c)
-        setCategories(c->subCategories(), c->name());
-    else
-        setCategories(*s_categories, QString());
-
-    categoryChanged(c);
-}
-
-Category* CategoryModel::displayedCategory() const
-{
-    return m_currentCategory;
+    Category::blacklistPluginsInVector({name}, m_rootCategories);
 }
 
 static Category* recFindCategory(Category* root, const QString& name)
 {
     if(root->name()==name)
         return root;
-    else if(root->hasSubCategories()) {
-        const QList<Category*> subs = root->subCategories();
+    else {
+        const auto subs = root->subCategories();
         Q_FOREACH (Category* c, subs) {
             Category* ret = recFindCategory(c, name);
             if(ret)
@@ -103,25 +89,12 @@ static Category* recFindCategory(Category* root, const QString& name)
     return nullptr;
 }
 
-Category* CategoryModel::findCategoryByName(const QString& name)
+Category* CategoryModel::findCategoryByName(const QString& name) const
 {
-    const QList<Category*> cats = *s_categories;
-    Q_FOREACH (Category* cat, cats) {
+    for (Category* cat: m_rootCategories) {
         Category* ret = recFindCategory(cat, name);
         if(ret)
             return ret;
     }
     return nullptr;
-}
-
-void CategoryModel::blacklistPlugin(const QString& name)
-{
-    const QSet<QString> plugins = {name};
-    for(QList<Category*>::iterator it = s_categories->begin(), itEnd = s_categories->end(); it!=itEnd; ) {
-        if ((*it)->blacklistPlugins(plugins)) {
-            delete *it;
-            it = s_categories->erase(it);
-        } else
-            ++it;
-    }
 }

@@ -35,11 +35,6 @@ void DummyNotifier::recheckSystemUpdateNeeded()
     emit foundUpdates();
 }
 
-bool DummyNotifier::isSystemUpToDate() const
-{
-    return true;
-}
-
 uint DummyNotifier::securityUpdatesCount()
 {
     return 0;
@@ -49,5 +44,3 @@ uint DummyNotifier::updatesCount()
 {
     return 0;
 }
-
-#include "DummyNotifier.moc"

@@ -19,114 +19,156 @@
 
 
 import QtQuick 2.1
+import QtQuick.Layouts 1.1
 import QtQuick.Controls 1.1
-import org.kde.discover 1.0
+import QtQuick.Controls 2.1 as QQC2
+import QtGraphicalEffects 1.0
+import org.kde.discover 2.0
+import org.kde.kirigami 2.0 as Kirigami
 
-Item {
-    id: shadow
-    state: "thumbnail"
-    property alias application: screenshotsModel.application
-    readonly property rect initialGeometry: fullParent.flickableItem ?
-        parent.mapFromItem(initialParent, fullParent.flickableItem.visibleArea.xPosition, fullParent.flickableItem.visibleArea.yPosition, initialParent.width, initialParent.height) :
-        parent.mapFromItem(initialParent, 0, 0, initialParent.width, initialParent.height)
-    readonly property rect fullGeometry: Qt.rect(0, 0, parent.width, parent.height)
+Flickable {
+    id: root
+    readonly property alias count: screenshotsModel.count
+    property alias resource: screenshotsModel.application
+    property var resource
+    property int currentIndex: -1
+    property Item currentItem: screenshotsRep.itemAt(currentIndex)
+    Layout.preferredHeight: Kirigami.Units.gridUnit * 13
+    contentHeight: height
+    contentWidth: screenshotsLayout.width
 
-    property Item initialParent: null
-    property Item fullParent: null
-    parent: fullParent
+    QQC2.Popup {
+        id: overlay
+        parent: applicationWindow().overlay
+        modal: true
 
-    Rectangle {
-        id: shadowItem
-        anchors.fill: parent
-        color: "black"
-        Behavior on opacity { NumberAnimation { duration: 1000; easing.type: Easing.InQuad } }
-    }
+        x: (parent.width - width)/2
+        y: (parent.height - height)/2
+        readonly property real proportion: overlayImage.sourceSize.width>1 ? overlayImage.sourceSize.height/overlayImage.sourceSize.width : 1
+        height: Math.min(parent.height * 0.9, (parent.width * 0.9) * proportion, overlayImage.sourceSize.height)
+        width: height/proportion
 
-    Image {
-        id: screenshot
-        anchors.centerIn: parent
-        height: sourceSize ? Math.min(parent.height-5, sourceSize.height) : parent.height
-        width: sourceSize ? Math.min(parent.width-5, sourceSize.width) : parent.width
-
-        asynchronous: true
-        fillMode: Image.PreserveAspectFit
-        source: thumbnailsView.currentIndex>=0 ? screenshotsModel.screenshotAt(thumbnailsView.currentIndex) : "image://icon/image-missing"
-        smooth: true
-        visible: screenshot.status == Image.Ready
-
-        onStatusChanged: if(status==Image.Error) {
-            sourceSize.width = sourceSize.height = 200
-            source="image://icon/image-missing"
-        }
-    }
-    BusyIndicator {
-        id: busy
-        readonly property real size: Math.min(parent.height, parent.width) * 0.9
-        width: size
-        height: size
-        anchors.centerIn: parent
-        running: visible
-        visible: screenshot.status == Image.Loading
-    }
-
-    states: [
-    State { name: "thumbnail"
-        PropertyChanges { target: shadowItem; opacity: 0.0 }
-        PropertyChanges { target: shadow; width: initialGeometry.width }
-        PropertyChanges { target: shadow; height: initialGeometry.height }
-        PropertyChanges { target: shadow; x: initialGeometry.x }
-        PropertyChanges { target: shadow; y: initialGeometry.y }
-        PropertyChanges { target: thumbnailsView; opacity: 1 }
-    },
-    State { name: "full"
-        PropertyChanges { target: shadowItem; opacity: 0.7 }
-        PropertyChanges { target: shadow; x: fullGeometry.x }
-        PropertyChanges { target: shadow; y: fullGeometry.y }
-        PropertyChanges { target: shadow; height: fullGeometry.height }
-        PropertyChanges { target: shadow; width: fullGeometry.width }
-        PropertyChanges { target: thumbnailsView; opacity: 0.3 }
-    }
-    ]
-    transitions: Transition {
-        SequentialAnimation {
-            PropertyAction { target: screenshot; property: "smooth"; value: false }
-            NumberAnimation { properties: "x,y,width,height"; easing.type: Easing.OutQuad; duration: 500 }
-            PropertyAction { target: screenshot; property: "smooth"; value: true }
-        }
-    }
-
-    MouseArea {
-        anchors.fill: parent
-        onClicked: { shadow.state = shadow.state == "thumbnail" ? "full" : "thumbnail" }
-    }
-
-    GridView {
-        id: thumbnailsView
-        cellHeight: 45
-        cellWidth: 45
-        interactive: false
-        visible: screenshotsModel.count>1
-
-        anchors {
-            fill: shadow
-            bottomMargin: 5
-        }
-
-        onCountChanged: currentIndex=0
-
-        model: ScreenshotsModel {
-            id: screenshotsModel
-        }
-        highlight: Rectangle { color: "white"; opacity: 0.5 }
-
-        delegate: Image {
-            source: small_image_url
-            anchors.top: parent.top
-            height: 40; width: 40
+        Image {
+            id: overlayImage
+            anchors.fill: parent
+            source: root.currentItem ? root.currentItem.imageSource : ""
             fillMode: Image.PreserveAspectFit
             smooth: true
-            MouseArea { anchors.fill: parent; onClicked: thumbnailsView.currentIndex=index}
         }
-        Behavior on opacity { NumberAnimation { easing.type: Easing.OutQuad; duration: 500 } }
+
+        Button {
+            anchors {
+                right: parent.left
+                verticalCenter: parent.verticalCenter
+            }
+            visible: leftAction.visible
+            iconName: leftAction.iconName
+            onClicked: leftAction.triggered(null)
+        }
+
+        Button {
+            anchors {
+                left: parent.right
+                verticalCenter: parent.verticalCenter
+            }
+            visible: rightAction.visible
+            iconName: rightAction.iconName
+            onClicked: rightAction.triggered(null)
+        }
+
+        Kirigami.Action {
+            id: leftAction
+            iconName: "arrow-left"
+            enabled: overlay.visible && visible
+            visible: root.currentIndex >= 1
+            onTriggered: root.currentIndex = (root.currentIndex - 1) % screenshotsModel.count
+        }
+
+        Kirigami.Action {
+            id: rightAction
+            iconName: "arrow-right"
+            enabled: overlay.visible && visible
+            visible: root.currentIndex < (root.count - 1)
+            onTriggered: root.currentIndex = (root.currentIndex + 1) % screenshotsModel.count
+        }
+    }
+
+    Row {
+        id: screenshotsLayout
+        height: root.contentHeight
+        spacing: Kirigami.Units.largeSpacing
+        focus: overlay.visible
+
+        Keys.onLeftPressed:  if (leftAction.visible)  leftAction.trigger()
+        Keys.onRightPressed: if (rightAction.visible) rightAction.trigger()
+
+        Repeater {
+            id: screenshotsRep
+            model: ScreenshotsModel {
+                id: screenshotsModel
+            }
+
+            delegate: MouseArea {
+                readonly property url imageSource: large_image_url
+                readonly property real proportion: thumbnail.sourceSize.width>1 ? thumbnail.sourceSize.height/thumbnail.sourceSize.width : 1
+                width: Math.max(50, height/proportion)
+                height: screenshotsLayout.height
+
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+
+                onClicked: {
+                    root.currentIndex = index
+                    overlay.open()
+                }
+
+                DropShadow {
+                    source: thumbnail
+                    anchors.fill: thumbnail
+                    verticalOffset: 3
+                    horizontalOffset: 0
+                    radius: 12.0
+                    samples: 25
+                    color: Kirigami.Theme.disabledTextColor
+                    cached: true
+                }
+
+                BusyIndicator {
+                    visible: running
+                    running: thumbnail.status == Image.Loading
+                    anchors.centerIn: parent
+                }
+
+                Image {
+                    id: thumbnail
+                    source: small_image_url
+                    height: parent.height
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                }
+            }
+        }
+    }
+    clip: true
+    readonly property var leftShadow: Shadow {
+        parent: root
+        anchors {
+            left: parent.left
+            top: parent.top
+            bottom: parent.bottom
+        }
+        edge: Qt.LeftEdge
+        width: Math.max(0, Math.min(root.width/5, root.contentX))
+    }
+
+    readonly property var rightShadow: Shadow {
+        parent: root
+        anchors {
+            right: parent.right
+            top: parent.top
+            bottom: parent.bottom
+        }
+        edge: Qt.RightEdge
+        width: Math.max(0, Math.min(root.contentWidth - root.contentX - root.width)/5)
     }
 }

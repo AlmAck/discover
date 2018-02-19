@@ -17,219 +17,351 @@
  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-import QtQuick 2.1
+import QtQuick 2.5
 import QtQuick.Controls 1.1
+import QtQuick.Controls 2.1 as QQC2
 import QtQuick.Window 2.1
 import QtQuick.Layouts 1.1
 import org.kde.kquickcontrolsaddons 2.0
-import org.kde.discover 1.0
+import org.kde.discover 2.0
 import org.kde.discover.app 1.0
+import org.kde.kirigami 2.1 as Kirigami
+import "navigation.js" as Navigation
 
-Item {
+DiscoverPage {
     id: appInfo
     property QtObject application: null
     clip: true
 
-    readonly property var icon: application.icon
-    readonly property string title: application.name
+    title: application.name
 
-    ConditionalLoader {
-        anchors.fill: parent
-        condition: app.isCompact
+    background: Rectangle { color: Kirigami.Theme.viewBackgroundColor }
 
-        componentFalse: Item {
-            readonly property real proposedMargin: (width-app.actualWidth)/2
+    ReviewsPage {
+        id: reviewsSheet
+        model: ReviewsModel {
+            id: reviewsModel
+            resource: appInfo.application
+        }
+    }
 
-            GridLayout {
-                x: proposedMargin
-                width: app.actualWidth
-                height: parent.height
-                columns: 2
-                rows: 2
-                rowSpacing: 3*SystemFonts.generalFont.pointSize
-                columnSpacing: rowSpacing
-
-                PageHeader {
-                    Layout.columnSpan: 2
-                    Layout.fillWidth: true
-                    topMargin: 0
-
-                    RowLayout {
-                        QIconItem {
-                            Layout.preferredHeight: col.height
-                            Layout.preferredWidth: col.height
-
-                            icon: appInfo.application.icon
-                        }
-
-                        ColumnLayout {
-                            id: col
-                            Layout.fillWidth: true
-
-                            spacing: 0
-                            Heading {
-                                text: appInfo.application.name
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                text: appInfo.application.comment
-                                wrapMode: Text.WordWrap
-                                elide: Text.ElideRight
-                                maximumLineCount: 1
-                            }
-                        }
-                        InstallApplicationButton {
-                            id: installButton
-                            application: appInfo.application
-                            additionalItem:  Rating {
-                                readonly property QtObject ratingInstance: application.rating
-                                visible: ratingInstance!=null
-                                rating:  ratingInstance==null ? 0 : ratingInstance.rating
-                            }
-                        }
+    Kirigami.OverlaySheet {
+        id: originsOverlay
+        bottomPadding: Kirigami.Units.largeSpacing
+        topPadding: Kirigami.Units.largeSpacing
+        readonly property alias model: alternativeResourcesView.model
+        function listBackends() {
+            var first = true;
+            var ret = "";
+            var m = alternativeResourcesView.model;
+            for(var i=0, count=m.rowCount(); i<count; ++i) {
+                var res = m.resourceAt(i)
+                if (res != appInfo.application) {
+                    if (!first) {
+                        ret += ", "
                     }
+                    ret += "<a href='" + i + "'>" + res.displayOrigin + "</a>"
+                    first = false
                 }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.preferredWidth: app.actualWidth/3
-
-                    Item {
-                        id: screenshotsPlaceholder
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: width/1.618
-
-                        ApplicationScreenshots {
-                            initialParent: screenshotsPlaceholder
-                            fullParent: appInfo
-                            application: appInfo.application
-                        }
-                    }
-                    ApplicationDetails {
-                        Layout.fillWidth: true
-                        application: appInfo.application
-                    }
-                    Button {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        visible: application.isInstalled && application.canExecute
-                        text: i18n("Launch")
-                        onClicked: application.invokeApplication()
-                    }
-                    Item {
-                        Layout.fillHeight: true
-                    }
-                }
-                ScrollView {
-                    id: scroll
-                    Layout.fillHeight: true
-                    Layout.fillWidth: true
-                    Layout.preferredWidth: app.actualWidth/2
-
-                    ApplicationDescription {
-                        width: scroll.viewport.width-margin/2
-                        application: appInfo.application
-                        isInstalling: installButton.isActive
-                    }
+            }
+            return ret
+        }
+        readonly property string sentence: alternativeResourcesView.count <= 1 ? "" : i18n("\nAlso available in %1", listBackends())
+        ListView {
+            id: alternativeResourcesView
+            model: ResourcesProxyModel {
+                allBackends: true
+                resourcesUrl: appInfo.application.url
+            }
+            delegate: Kirigami.BasicListItem {
+                label: displayOrigin
+                checked: appInfo.application == model.application
+                onClicked: if(index>=0) {
+                    var res = model.application
+                    console.assert(res)
+                    window.stack.pop()
+                    Navigation.openApplication(res)
                 }
             }
         }
-        componentTrue: ScrollView {
-            id: scroll
-            flickableItem.flickableDirection: Flickable.VerticalFlick
+    }
 
+    actions {
+        main: appbutton.action
+        right: Kirigami.Action {
+            visible: application.isInstalled && application.canExecute
+            text: application.executeLabel
+            icon.name: "media-playback-start"
+            onTriggered: application.invokeApplication()
+        }
+    }
 
+    InstallApplicationButton {
+        id: appbutton
+        Layout.rightMargin: Kirigami.Units.smallSpacing
+        application: appInfo.application
+        visible: false
+    }
+
+    leftPadding: Kirigami.Units.largeSpacing * (applicationWindow().wideScreen ? 2 : 1)
+    rightPadding: Kirigami.Units.largeSpacing * (applicationWindow().wideScreen ? 2 : 1)
+    // Icon, name, caption, screenshots, description and reviews
+    ColumnLayout {
+        spacing: 0
+        RowLayout {
+            Kirigami.Icon {
+                Layout.preferredHeight: 80
+                Layout.preferredWidth: 80
+                source: appInfo.application.icon
+                Layout.rightMargin: Kirigami.Units.smallSpacing * 2
+            }
             ColumnLayout {
-                width: scroll.viewport.width-desc.margin*4
-                x: desc.margin*2
-
-                GridItem {
+                spacing: 0
+                Kirigami.Heading {
+                    level: 1
+                    text: appInfo.application.name
+                    lineHeight: 1.0
+                    maximumLineCount: 1
+                    elide: Text.ElideRight
                     Layout.fillWidth: true
-                    height: conts.Layout.minimumHeight + 2*internalMargin
-                    enabled: false
-
-                    ColumnLayout {
-                        id: conts
-                        anchors.fill: parent
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            QIconItem {
-                                Layout.preferredHeight: title.height
-                                Layout.preferredWidth: title.height
-
-                                icon: appInfo.application.icon
-                                Layout.alignment: Qt.AlignTop
-                            }
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-
-                                Heading {
-                                    id: title
-                                    text: appInfo.application.name
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
-                                }
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: appInfo.application.comment
-                                    wrapMode: Text.WordWrap
-                                    elide: Text.ElideRight
-                                    maximumLineCount: 1
-                                }
-                                Rating {
-                                    readonly property QtObject ratingInstance: application.rating
-                                    visible: ratingInstance!=null
-                                    rating:  ratingInstance==null ? 0 : ratingInstance.rating
-                                    starSize: title.paintedHeight
-
-                                    Text { text: i18n(" (%1)", parent.ratingInstance.ratingCount) }
-                                }
-                            }
-                        }
-                        InstallApplicationButton {
-                            Layout.fillWidth: true
-                            application: appInfo.application
-                            fill: true
-                            additionalItem: Button {
-                                Layout.fillWidth: true
-                                visible: application.isInstalled && application.canExecute
-                                text: i18n("Launch")
-                                onClicked: application.invokeApplication()
-                            }
-                        }
-                    }
+                    Layout.alignment: Text.AlignBottom
                 }
-
-                Item {
-                    id: screenshotsPlaceholder
+                Kirigami.Heading {
+                    level: 4
+                    text: appInfo.application.comment
+                    maximumLineCount: 2
+                    lineHeight: lineCount > 1 ? 0.75 : 1.2
+                    elide: Text.ElideRight
                     Layout.fillWidth: true
-                    Layout.minimumHeight: width/1.618
-
-                    ApplicationScreenshots {
-                        application: appInfo.application
-                        initialParent: screenshotsPlaceholder
-                        fullParent: scroll
-                    }
-                }
-
-                ApplicationDescription {
-                    id: desc
-                    Layout.fillWidth: true
-
-                    application: appInfo.application
-                    z: -1
-                }
-
-                ApplicationDetails {
-                    id: details
-                    Layout.fillWidth: true
-                    application: appInfo.application
+                    Layout.alignment: Qt.AlignTop
                 }
             }
+            Layout.bottomMargin: Kirigami.Units.largeSpacing
         }
+
+        ApplicationScreenshots {
+            id: screenshots
+            Layout.fillWidth: true
+            visible: count > 0
+            resource: appInfo.application
+            QQC2.ScrollBar.horizontal: screenshotsScrollbar
+        }
+        QQC2.ScrollBar {
+            id: screenshotsScrollbar
+            Layout.fillWidth: true
+        }
+
+        QQC2.Label {
+            Layout.topMargin: Kirigami.Units.largeSpacing
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: appInfo.application.longDescription + originsOverlay.sentence
+            onLinkActivated: {
+                var idx = parseInt(link, 10)
+                var res = originsOverlay.model.resourceAt(idx)
+                window.stack.pop()
+                Navigation.openApplication(res)
+            }
+        }
+
+        LinkButton {
+            id: addonsButton
+            text: i18n("Addons")
+            visible: addonsView.containsAddons
+            onClicked: addonsView.sheetOpen = true
+        }
+
+
+        Kirigami.Heading {
+            Layout.topMargin: Kirigami.Units.largeSpacing
+            text: i18n("Reviews")
+            level: 2
+            visible: rep.count > 0
+        }
+
+        Rectangle {
+            color: Kirigami.Theme.linkColor
+            Layout.fillWidth: true
+            height: 1
+            visible: rep.count > 0
+        }
+
+        Repeater {
+            id: rep
+            model: PaginateModel {
+                sourceModel: reviewsSheet.model
+                pageSize: 3
+            }
+            delegate: ReviewDelegate {
+                Layout.topMargin: Kirigami.Units.largeSpacing
+                separator: false
+                compact: true
+                Layout.bottomMargin: Kirigami.Units.largeSpacing
+            }
+        }
+        LinkButton {
+            text: appInfo.application.isInstalled? i18n("Be the first to write a review!") : i18n("Install this app and be the first to write a review!")
+            onClicked: reviewsSheet.openReviewDialog()
+            enabled: appInfo.application.isInstalled
+            visible: !commentsButton.visible && reviewsModel.backend && reviewsModel.backend.isResourceSupported(appInfo.application)
+        }
+        LinkButton {
+            id: commentsButton
+            visible: reviewsModel.count > 0
+            text: i18n("Show all %1 reviews...", reviewsModel.count)
+
+            onClicked: {
+                reviewsSheet.open()
+            }
+            Layout.bottomMargin: Kirigami.Units.largeSpacing
+        }
+
+        Rectangle {
+            color: Kirigami.Theme.linkColor
+            Layout.fillWidth: true
+            height: 1
+            Layout.bottomMargin: Kirigami.Units.largeSpacing
+        }
+        GridLayout {
+            rowSpacing: 0
+            columns: 2
+
+            // Category row
+            QQC2.Label {
+                Layout.alignment: Qt.AlignRight
+                text: i18n("Category:")
+            }
+            QQC2.Label {
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                text: appInfo.application.categoryDisplay
+            }
+
+            // Version row
+            QQC2.Label {
+                visible: versionLabel.visible
+                Layout.alignment: Qt.AlignRight
+                text: i18n("Version:")
+            }
+            QQC2.Label {
+                readonly property string version: appInfo.application.isInstalled ? appInfo.application.installedVersion : appInfo.application.availableVersion
+                id: versionLabel
+                visible: text.length > 0
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                text: version ? version : ""
+            }
+
+            // Size row
+            QQC2.Label {
+                Layout.alignment: Qt.AlignRight
+                text: i18n("Size:")
+            }
+            QQC2.Label {
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                text: i18n("%1", appInfo.application.sizeDescription)
+            }
+
+            // Source row
+            QQC2.Label {
+                Layout.alignment: Qt.AlignRight
+                text: i18n("Source:")
+            }
+            LinkButton {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignLeft
+                enabled: alternativeResourcesView.count > 1
+                text: appInfo.application.displayOrigin
+                elide: Text.ElideRight
+                onClicked: originsOverlay.open()
+            }
+
+            // License row
+            QQC2.Label {
+                Layout.alignment: Qt.AlignRight
+                text: i18n("License:")
+                visible: appInfo.application.license.length>0
+            }
+            LinkButton {
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignLeft
+                visible: text.length>0
+                text: appInfo.application.license
+//                         tooltip: i18n("See full license terms")
+                onClicked: Qt.openUrlExternally("https://spdx.org/licenses/" + appInfo.application.license + ".html#licenseText")
+            }
+
+            // Homepage row
+            QQC2.Label {
+                visible: homepageLink.visible
+                Layout.alignment: Qt.AlignRight
+                text: i18n("Homepage:")
+            }
+            LinkButton {
+                id: homepageLink
+                visible: text.length > 0
+                text: application.homepage
+                onClicked: Qt.openUrlExternally(application.homepage)
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignLeft
+            }
+
+            // "User Guide" row
+            QQC2.Label {
+                visible: docsLink.visible
+                Layout.alignment: Qt.AlignRight
+                text: i18n("User Guide:")
+            }
+            LinkButton {
+                id: docsLink
+                visible: text.length > 0
+                text: application.helpURL
+                onClicked: Qt.openUrlExternally(helpURL)
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignLeft
+            }
+
+            // Donate row
+            QQC2.Label {
+                visible: donationLink.visible
+                Layout.alignment: Qt.AlignRight
+                text: i18n("Donate:")
+            }
+            LinkButton {
+                id: donationLink
+                visible: text.length > 0
+                text: application.donationURL
+                onClicked: Qt.openUrlExternally(donationURL)
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignLeft
+            }
+
+            // "Report a Droblem" row
+            QQC2.Label {
+                visible: bugLink.visible
+                Layout.alignment: Qt.AlignRight
+                text: i18n("Report a Problem:")
+            }
+            LinkButton {
+                id: bugLink
+                visible: text.length > 0
+                text: application.bugURL
+                onClicked: Qt.openUrlExternally(bugURL)
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignLeft
+            }
+        }
+    }
+
+    readonly property var addons: AddonsView {
+        id: addonsView
+        application: appInfo.application
+        parent: overlay
     }
 }

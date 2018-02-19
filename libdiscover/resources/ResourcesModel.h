@@ -21,104 +21,108 @@
 #ifndef RESOURCESMODEL_H
 #define RESOURCESMODEL_H
 
-#include <QtCore/QModelIndex>
+#include <QSet>
 #include <QVector>
+#include <QTimer>
 
 #include "discovercommon_export.h"
 #include "AbstractResourcesBackend.h"
 
-class AbstractResource;
-class AbstractResourcesBackend;
+class QAction;
 
-class DISCOVERCOMMON_EXPORT ResourcesModel : public QAbstractListModel
+class DISCOVERCOMMON_EXPORT AggregatedResultsStream : public ResultsStream
+{
+Q_OBJECT
+public:
+    AggregatedResultsStream(const QSet<ResultsStream*>& streams);
+
+Q_SIGNALS:
+    void finished();
+
+private:
+    void addResults(const QVector<AbstractResource*>& res);
+    void emitResults();
+    void destruction(QObject* obj);
+    void clear();
+
+    QSet<QObject*> m_streams;
+    QVector<AbstractResource*> m_results;
+    QTimer m_delayedEmission;
+};
+
+class DISCOVERCOMMON_EXPORT ResourcesModel : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(int updatesCount READ updatesCount NOTIFY updatesCountChanged)
+    Q_PROPERTY(bool hasSecurityUpdates READ hasSecurityUpdates NOTIFY updatesCountChanged)
     Q_PROPERTY(bool isFetching READ isFetching NOTIFY fetchingChanged)
-    Q_PROPERTY(QVariantList messageActions READ messageActionsVariant NOTIFY fetchingChanged)
+    Q_PROPERTY(QVariantList applicationBackends READ applicationBackendsVariant NOTIFY backendsChanged)
+    Q_PROPERTY(AbstractResourcesBackend* currentApplicationBackend READ currentApplicationBackend WRITE setCurrentApplicationBackend NOTIFY currentApplicationBackendChanged)
+    Q_PROPERTY(QAction* updateAction READ updateAction CONSTANT)
     public:
-        enum Roles {
-            NameRole = Qt::UserRole,
-            IconRole,
-            CommentRole,
-            StateRole,
-            RatingRole,
-            RatingPointsRole,
-            SortableRatingRole,
-            ActiveRole,
-            InstalledRole,
-            ApplicationRole,
-            OriginRole,
-            CanUpgrade,
-            PackageNameRole,
-            IsTechnicalRole,
-            CategoryRole,
-            SectionRole,
-            MimeTypes,
-            SizeRole
-        };
         /** This constructor should be only used by unit tests.
          *  @p backendName defines what backend will be loaded when the backend is constructed.
          */
         explicit ResourcesModel(const QString& backendName, QObject* parent = nullptr);
         static ResourcesModel* global();
-        virtual ~ResourcesModel();
+        ~ResourcesModel() override;
         
-        virtual QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
-        virtual int rowCount(const QModelIndex& parent = QModelIndex()) const override;
-        
-        AbstractResource* resourceAt(int row) const;
-        QModelIndex resourceIndex(AbstractResource* res) const;
         QVector< AbstractResourcesBackend* > backends() const;
         int updatesCount() const;
-        virtual QMap< int, QVariant > itemData(const QModelIndex& index) const override;
-        
-        Q_SCRIPTABLE AbstractResource* resourceByPackageName(const QString& name);
-
-        void integrateActions(KActionCollection* w);
+        bool hasSecurityUpdates() const;
         
         bool isBusy() const;
         bool isFetching() const;
-        QList<QAction*> messageActions() const;
-        QVariantList messageActionsVariant() const;
         
-        virtual QHash<int, QByteArray> roleNames() const override;
+        Q_SCRIPTABLE bool isExtended(const QString &id);
+
+        AggregatedResultsStream* findResourceByPackageName(const QUrl& search);
+        AggregatedResultsStream* search(const AbstractResourcesBackend::Filters &search);
+        AbstractResource* resourceForFile(const QUrl &/*url*/);
+        void checkForUpdates();
+
+        QVariantList applicationBackendsVariant() const;
+        QVector<AbstractResourcesBackend*> applicationBackends() const;
+        void setCurrentApplicationBackend(AbstractResourcesBackend* backend, bool writeConfig = true);
+        AbstractResourcesBackend* currentApplicationBackend() const;
+
+        QAction* updateAction() const { return m_updateAction; }
 
     public Q_SLOTS:
         void installApplication(AbstractResource* app, const AddonList& addons);
         void installApplication(AbstractResource* app);
         void removeApplication(AbstractResource* app);
-        void cancelTransaction(AbstractResource* app);
 
     Q_SIGNALS:
-        void fetchingChanged();
+        void fetchingChanged(bool isFetching);
         void allInitialized();
         void backendsChanged();
         void updatesCountChanged();
-        void searchInvalidated();
+        void backendDataChanged(AbstractResourcesBackend* backend, const QVector<QByteArray>& properties);
+        void resourceDataChanged(AbstractResource* resource, const QVector<QByteArray>& properties);
+        void resourceRemoved(AbstractResource* resource);
+        void passiveMessage(const QString &message);
+        void currentApplicationBackendChanged(AbstractResourcesBackend* currentApplicationBackend);
 
     private Q_SLOTS:
-        void resetBackend(AbstractResourcesBackend* backend);
-        void cleanBackend(AbstractResourcesBackend* backend);
         void callerFetchingChanged();
-        void updateCaller();
+        void updateCaller(const QVector<QByteArray>& properties);
         void registerAllBackends();
-        void resourceChangedByTransaction(Transaction* t);
 
     private:
-        int rowsBeforeBackend(AbstractResourcesBackend* backend, QVector<QVector<AbstractResource*>>::iterator& backendsResources);
-
         ///@p initialize tells if all backends load will be triggered on construction
-        explicit ResourcesModel(QObject* parent=nullptr, bool initialize = true);
-        void init(bool initialize);
-        void addResourcesBackend(AbstractResourcesBackend* resources);
+        explicit ResourcesModel(QObject* parent=nullptr, bool load = true);
+        void init(bool load);
+        void addResourcesBackend(AbstractResourcesBackend* backend);
         void registerBackendByName(const QString& name);
+        void initApplicationsBackend();
+        void slotFetching();
 
+        bool m_isFetching;
         QVector< AbstractResourcesBackend* > m_backends;
-        QVector< QVector<AbstractResource*> > m_resources;
         int m_initializingBackends;
-        KActionCollection* m_actionCollection;
-        const QHash<int, QByteArray> m_roles;
+        QAction* m_updateAction = nullptr;
+        AbstractResourcesBackend* m_currentApplicationBackend;
 
         static ResourcesModel* s_self;
 };

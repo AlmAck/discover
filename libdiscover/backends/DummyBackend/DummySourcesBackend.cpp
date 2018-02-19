@@ -22,22 +22,16 @@
 #include <QDebug>
 #include <QAction>
 
-DummySourcesBackend::DummySourcesBackend(QObject* parent)
+DummySourcesBackend::DummySourcesBackend(AbstractResourcesBackend * parent)
     : AbstractSourcesBackend(parent)
     , m_sources(new QStandardItemModel(this))
     , m_testAction(new QAction(QIcon::fromTheme(QStringLiteral("kalgebra")), QStringLiteral("DummyAction"), this))
 {
-    QHash<int, QByteArray> roles = m_sources->roleNames();
-    roles.insert(Qt::CheckStateRole, "checked");
-    m_sources->setItemRoleNames(roles);
-
-    addSource(QStringLiteral("DummySource1"));
-    addSource(QStringLiteral("DummySource2"));
-    addSource(QStringLiteral("DummySource3"));
-    addSource(QStringLiteral("DummySource4"));
-    addSource(QStringLiteral("DummySource5"));
+    for (int i = 0; i<10; ++i)
+        addSource(QStringLiteral("DummySource%1").arg(i));
 
     connect(m_testAction, &QAction::triggered, [](){ qDebug() << "action triggered!"; });
+    connect(m_sources, &QStandardItemModel::itemChanged, this, [](QStandardItem* item) { qDebug() << "DummySource changed" << item << item->checkState(); });
 }
 
 QAbstractItemModel* DummySourcesBackend::sources()
@@ -49,6 +43,8 @@ bool DummySourcesBackend::addSource(const QString& id)
 {
     QStandardItem* it = new QStandardItem(id);
     it->setData(QVariant(id + QLatin1Char(' ') + id), Qt::ToolTipRole);
+    it->setCheckable(true);
+    it->setCheckState(Qt::Checked);
     m_sources->appendRow(it);
     return true;
 }

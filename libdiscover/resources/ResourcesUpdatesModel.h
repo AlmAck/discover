@@ -23,6 +23,7 @@
 
 #include <QStandardItemModel>
 #include <QDateTime>
+#include <QPointer>
 #include "discovercommon_export.h"
 
 class AbstractResourcesBackend;
@@ -31,65 +32,55 @@ class QAction;
 class AbstractBackendUpdater;
 class ResourcesModel;
 class QDBusInterface;
+class Transaction;
+class UpdateTransaction;
 
 class DISCOVERCOMMON_EXPORT ResourcesUpdatesModel : public QStandardItemModel
 {
     Q_OBJECT
-    Q_PROPERTY(qreal progress READ progress NOTIFY progressChanged)
-    Q_PROPERTY(QString remainingTime READ remainingTime NOTIFY etaChanged)
-    Q_PROPERTY(quint64 downloadSpeed READ downloadSpeed NOTIFY downloadSpeedChanged)
-    Q_PROPERTY(bool isCancelable READ isCancelable NOTIFY cancelableChanged)
     Q_PROPERTY(bool isProgressing READ isProgressing NOTIFY progressingChanged)
     Q_PROPERTY(QDateTime lastUpdate READ lastUpdate NOTIFY progressingChanged)
     Q_PROPERTY(qint64 secsToLastUpdate READ secsToLastUpdate NOTIFY progressingChanged)
+    Q_PROPERTY(Transaction* transaction READ transaction NOTIFY progressingChanged)
     public:
         explicit ResourcesUpdatesModel(QObject* parent = nullptr);
-        
-        qreal progress() const;
-        QString remainingTime() const;
-        bool hasUpdates() const;
+
         quint64 downloadSpeed() const;
         Q_SCRIPTABLE void prepare();
 
-        ///checks if any of them is cancelable
-        bool isCancelable() const;
         bool isProgressing() const;
-        bool isAllMarked() const;
         QList<AbstractResource*> toUpdate() const;
         QDateTime lastUpdate() const;
+        double updateSize() const;
         void addResources(const QList<AbstractResource*>& resources);
         void removeResources(const QList<AbstractResource*>& resources);
 
         qint64 secsToLastUpdate() const;
+        QVector<AbstractBackendUpdater*> updaters() const { return m_updaters; }
+        Transaction* transaction() const;
 
     Q_SIGNALS:
         void downloadSpeedChanged();
-        void progressChanged();
-        void etaChanged();
-        void cancelableChanged();
-        void progressingChanged(bool progressing);
-        void statusMessageChanged(const QString& message);
-        void statusDetailChanged(const QString& msg);
+        void progressingChanged();
         void finished();
         void resourceProgressed(AbstractResource* resource, qreal progress);
+        void passiveMessage(const QString &message);
 
     public Q_SLOTS:
-        void cancel();
         void updateAll();
 
     private Q_SLOTS:
         void updaterDestroyed(QObject* obj);
         void message(const QString& msg);
-        void addNewBackends();
-        void slotProgressingChanged(bool progressing);
 
     private:
-        void setResourcesModel(ResourcesModel* model);
+        void init();
+        void updateFinished();
+        void setTransaction(UpdateTransaction* transaction);
 
-        ResourcesModel* m_resources;
         QVector<AbstractBackendUpdater*> m_updaters;
         bool m_lastIsProgressing;
-        QDBusInterface * m_kded;
+        QPointer<UpdateTransaction> m_transaction;
 };
 
 #endif // RESOURCESUPDATESMODEL_H

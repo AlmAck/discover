@@ -43,11 +43,14 @@ class DISCOVERCOMMON_EXPORT Transaction : public QObject
 {
     Q_OBJECT
 
+    Q_PROPERTY(QString name READ name CONSTANT)
+    Q_PROPERTY(QVariant icon READ icon CONSTANT)
     Q_PROPERTY(AbstractResource* resource READ resource CONSTANT)
     Q_PROPERTY(Role role READ role CONSTANT)
     Q_PROPERTY(Status status READ status NOTIFY statusChanged)
     Q_PROPERTY(bool isCancellable READ isCancellable NOTIFY cancellableChanged)
     Q_PROPERTY(int progress READ progress NOTIFY progressChanged)
+    Q_PROPERTY(bool visible READ isVisible WRITE setVisible NOTIFY visibleChanged)
 
 public:
     enum Status {
@@ -60,9 +63,13 @@ public:
         /// Transaction is doing an installation/removal
         CommittingStatus,
         /// Transaction is done
-        DoneStatus
+        DoneStatus,
+        /// Transaction is done, but there was an error during transaction
+        DoneWithErrorStatus,
+        /// Transaction was cancelled
+        CancelledStatus
     };
-    Q_ENUMS(Status)
+    Q_ENUM(Status)
 
     enum Role {
         ///The transaction is going to install a resource
@@ -72,12 +79,12 @@ public:
         ///The transaction is going to change the addons of a resource
         ChangeAddonsRole
     };
-    Q_ENUMS(Role)
+    Q_ENUM(Role)
 
     Transaction(QObject *parent, AbstractResource *resource,
-                 Transaction::Role role);
-    Transaction(QObject *parent, AbstractResource *resource,
-                 Transaction::Role role, const AddonList &addons);
+                 Transaction::Role role, const AddonList &addons = {});
+
+    ~Transaction() override;
 
     /**
      * @returns the AbstractResource which this transaction works with
@@ -119,18 +126,36 @@ public:
      * @param progress this should be a percentage of how much of the transaction is already done
      */
     void setProgress(int progress);
+
     /**
      * Cancels the transaction
      */
-    void cancel();
+    Q_SCRIPTABLE virtual void cancel() = 0;
+
+    /**
+     * @returns if the transaction is either downloading or committing
+     */
+    bool isActive() const;
+
+    Q_SCRIPTABLE virtual void proceed() {}
+
+    /** @returns a name that identifies the transaction */
+    virtual QString name() const;
+
+    /** @returns an icon that describes the transaction */
+    virtual QVariant icon() const;
+
+    bool isVisible() const;
+    void setVisible(bool v);
 
 private:
-    AbstractResource *m_resource;
-    Role m_role;
+    AbstractResource * const m_resource;
+    const Role m_role;
     Status m_status;
-    AddonList m_addons;
+    const AddonList m_addons;
     bool m_isCancellable;
     int m_progress;
+    bool m_visible = true;
 
 Q_SIGNALS:
     /**
@@ -145,6 +170,19 @@ Q_SIGNALS:
      * This gets emitted when the transaction changed the percentage of how much of it is already done
      */
     void progressChanged(int progress);
+
+    /**
+     * Provides a message to be shown to the user
+     *
+     * The user gets to acknowledge and proceed or cancel the transaction.
+     *
+     * @sa proceed(), cancel()
+     */
+    void proceedRequest(const QString &title, const QString &description);
+
+    void passiveMessage(const QString &message);
+
+    void visibleChanged(bool visible);
 };
 
 #endif // TRANSACTION_H

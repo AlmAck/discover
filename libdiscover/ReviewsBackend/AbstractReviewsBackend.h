@@ -23,18 +23,17 @@
 
 #include <QObject>
 
-#include "discovercommon_export.h"
+#include "ReviewsModel.h"
 
 class Rating;
 class AbstractResource;
-class Review;
 
 class DISCOVERCOMMON_EXPORT AbstractReviewsBackend : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool isReviewable READ isReviewable CONSTANT)
     Q_PROPERTY(bool hasCredentials READ hasCredentials NOTIFY loginStateChanged)
-    Q_PROPERTY(QString name READ userName NOTIFY loginStateChanged)
+    Q_PROPERTY(QString userName READ userName NOTIFY loginStateChanged)
     public:
         explicit AbstractReviewsBackend(QObject* parent = nullptr);
 
@@ -43,6 +42,8 @@ class DISCOVERCOMMON_EXPORT AbstractReviewsBackend : public QObject
 
         Q_SCRIPTABLE virtual Rating *ratingForApplication(AbstractResource *app) const = 0;
         Q_INVOKABLE virtual QString errorMessage() const;
+        Q_INVOKABLE virtual bool isResourceSupported(AbstractResource *res) const = 0;
+
     public Q_SLOTS:
         virtual void login() = 0;
         virtual void registerAndLogin() = 0;
@@ -57,8 +58,7 @@ class DISCOVERCOMMON_EXPORT AbstractReviewsBackend : public QObject
         virtual bool isReviewable() const;
 
     Q_SIGNALS:
-        void reviewsReady(AbstractResource *app, QList<Review *>);
-        void ratingsReady();
+        void reviewsReady(AbstractResource *app, const QVector<ReviewPtr> &, bool canFetchMore);
         void loginStateChanged();
 };
 

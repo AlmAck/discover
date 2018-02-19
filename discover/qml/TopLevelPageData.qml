@@ -17,17 +17,11 @@
  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-import QtQuick 2.1
-import QtQuick.Controls 1.2
-import "navigation.js" as Navigation
+import org.kde.kirigami 2.0
 
 Action {
-    property string overlay
-    property Component component
-    checkable: true
+    property string component
     checked: window.currentTopLevel==component
-    enabled: window.navigationEnabled
-    exclusiveGroup: appTabs
 
     onTriggered: {
         if(window.currentTopLevel!=component)

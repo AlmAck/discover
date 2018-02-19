@@ -21,10 +21,11 @@
 #ifndef CATEGORY_H
 #define CATEGORY_H
 
-#include <QtCore/QList>
+#include <QtCore/QVector>
 #include <QtCore/QPair>
 #include <QtCore/QObject>
 #include <QtCore/QSet>
+#include <QtCore/QUrl>
 
 #include "discovercommon_export.h"
 
@@ -35,7 +36,8 @@ enum FilterType {
     CategoryFilter,
     PkgSectionFilter,
     PkgWildcardFilter,
-    PkgNameFilter
+    PkgNameFilter,
+    AppstreamIdWildcardFilter
 };
 
 class DISCOVERCOMMON_EXPORT Category : public QObject
@@ -44,35 +46,51 @@ Q_OBJECT
 public:
     Q_PROPERTY(QString name READ name CONSTANT)
     Q_PROPERTY(QString icon READ icon CONSTANT)
-    Q_PROPERTY(bool hasSubCategories READ hasSubCategories CONSTANT)
-    Q_PROPERTY(bool shouldShowTechnical READ shouldShowTechnical CONSTANT)
+    Q_PROPERTY(QObject* parent READ parent CONSTANT)
+    Q_PROPERTY(QUrl decoration READ decoration CONSTANT)
+    Q_PROPERTY(QVariantList subcategories READ subCategoriesVariant NOTIFY subCategoriesChanged)
     explicit Category(QSet<QString>  pluginNames, QObject* parent = nullptr);
-    ~Category();
+
+    Category(const QString& name, const QString& iconName, const QVector< QPair< FilterType, QString > >& orFilters, const QSet<QString> &pluginName, const QVector<Category *>& subCategories, const QUrl& decoration, bool isAddons);
+    ~Category() override;
 
     QString name() const;
     QString icon() const;
-    QList<QPair<FilterType, QString> > andFilters() const;
-    QList<QPair<FilterType, QString> > orFilters() const;
-    QList<QPair<FilterType, QString> > notFilters() const;
-    bool hasSubCategories() const;
-    bool shouldShowTechnical() const;
-    QList<Category *> subCategories() const;
+    QVector<QPair<FilterType, QString> > andFilters() const;
+    QVector<QPair<FilterType, QString> > orFilters() const;
+    QVector<QPair<FilterType, QString> > notFilters() const;
+    QVector<Category *> subCategories() const;
+    QVariantList subCategoriesVariant() const;
 
-    static void addSubcategory(QList<Category*>& list, Category* cat);
-    void parseData(const QString& path, const QDomNode& data, bool canHaveChildren);
+    static void sortCategories(QVector<Category*>& cats);
+    static void addSubcategory(QVector<Category*>& cats, Category* cat);
+    void parseData(const QString& path, const QDomNode& data);
     bool blacklistPlugins(const QSet<QString>& pluginName);
+    bool isAddons() const { return m_isAddons; }
+    QUrl decoration() const;
+    bool matchesCategoryName(const QString &name) const;
+
+    Q_SCRIPTABLE bool contains(Category* cat) const;
+    Q_SCRIPTABLE bool contains(const QVariantList &cats) const;
+
+    static bool categoryLessThan(Category *c1, const Category *c2);
+    static bool blacklistPluginsInVector(const QSet<QString>& pluginNames, QVector<Category *>& subCategories);
+
+Q_SIGNALS:
+    void subCategoriesChanged();
 
 private:
     QString m_name;
     QString m_iconString;
-    QList<QPair<FilterType, QString> > m_andFilters;
-    QList<QPair<FilterType, QString> > m_orFilters;
-    QList<QPair<FilterType, QString> > m_notFilters;
-    bool m_showTechnical;
-    QList<Category *> m_subCategories;
+    QUrl m_decoration;
+    QVector<QPair<FilterType, QString> > m_andFilters;
+    QVector<QPair<FilterType, QString> > m_orFilters;
+    QVector<QPair<FilterType, QString> > m_notFilters;
+    QVector<Category *> m_subCategories;
 
-    QList<QPair<FilterType, QString> > parseIncludes(const QDomNode &data);
+    QVector<QPair<FilterType, QString> > parseIncludes(const QDomNode &data);
     QSet<QString> m_plugins;
+    bool m_isAddons = false;
 };
 
 #endif

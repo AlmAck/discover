@@ -25,54 +25,64 @@
 #include <resources/AbstractResourcesBackend.h>
 #include <QVariantList>
 #include <QStringList>
-#include <qpointer.h>
+#include <QPointer>
+#include <QTimer>
 #include <QSet>
+#include <QSharedPointer>
 #include <PackageKit/Transaction>
-#include <AppstreamQt/database.h>
-#include <functional>
+#include <AppStreamQt/pool.h>
 
 class AppPackageKitResource;
 class PackageKitUpdater;
 class PKTransaction;
-
+class OdrsReviewsBackend;
 class DISCOVERCOMMON_EXPORT PackageKitBackend : public AbstractResourcesBackend
 {
     Q_OBJECT
     public:
         explicit PackageKitBackend(QObject* parent = nullptr);
-        ~PackageKitBackend();
-        
-        virtual AbstractBackendUpdater* backendUpdater() const override;
-        virtual AbstractReviewsBackend* reviewsBackend() const override;
-        
-        virtual QVector< AbstractResource* > allResources() const override;
-        virtual AbstractResource* resourceByPackageName(const QString& name) const override;
-        virtual QList<AbstractResource*> searchPackageName(const QString& searchText) override;
-        virtual int updatesCount() const override;
-        
-        virtual void installApplication(AbstractResource* app) override;
-        virtual void installApplication(AbstractResource* app, const AddonList& addons) override;
-        virtual void removeApplication(AbstractResource* app) override;
-        virtual void cancelTransaction(AbstractResource* app) override;
-        virtual bool isValid() const override { return true; }
-        virtual QList<AbstractResource*> upgradeablePackages() const override;
-        virtual bool isFetching() const override;
-        virtual QList<QAction*> messageActions() const override;
+        ~PackageKitBackend() override;
+
+        AbstractBackendUpdater* backendUpdater() const override;
+        AbstractReviewsBackend* reviewsBackend() const override;
+        QSet<AbstractResource*> resourcesByPackageName(const QString& name) const;
+
+        ResultsStream* search(const AbstractResourcesBackend::Filters & search) override;
+        ResultsStream* findResourceByPackageName(const QUrl& search) override;
+        int updatesCount() const override;
+        bool hasSecurityUpdates() const override;
+
+        Transaction* installApplication(AbstractResource* app) override;
+        Transaction* installApplication(AbstractResource* app, const AddonList& addons) override;
+        Transaction* removeApplication(AbstractResource* app) override;
+        bool isValid() const override { return true; }
+        QSet<AbstractResource*> upgradeablePackages() const;
+        bool isFetching() const override;
 
         bool isPackageNameUpgradeable(const PackageKitResource* res) const;
         QString upgradeablePackageId(const PackageKitResource* res) const;
-        QVector<AbstractResource*> resourcesByPackageName(const QString& name, bool updating) const;
         QVector<AppPackageKitResource*> extendedBy(const QString& id) const;
 
+        void clearPackages(const QStringList &packageNames);
+        void resolvePackages(const QStringList &packageNames);
+        void fetchDetails(const QString& pkgid);
+
+        AbstractResource * resourceForFile(const QUrl & ) override;
+        void checkForUpdates() override;
+        QString displayName() const override;
+
+        bool hasApplications() const override { return true; }
+        static QString locateService(const QString &filename);
+
     public Q_SLOTS:
-        void transactionCanceled(Transaction* t);
-        void removeTransaction(Transaction* t);
         void reloadPackageList();
         void refreshDatabase();
 
     private Q_SLOTS:
-        void getPackagesFinished(PackageKit::Transaction::Exit exit);
-        void addPackage(PackageKit::Transaction::Info info, const QString &packageId, const QString &summary);
+        void getPackagesFinished();
+        void addPackage(PackageKit::Transaction::Info info, const QString &packageId, const QString &summary, bool arch);
+        void addPackageArch(PackageKit::Transaction::Info info, const QString &packageId, const QString &summary);
+        void addPackageNotArch(PackageKit::Transaction::Info info, const QString &packageId, const QString &summary);
         void packageDetails(const PackageKit::Details& details);
         void transactionError(PackageKit::Transaction::Error, const QString& message);
         void addPackageToUpdate(PackageKit::Transaction::Info, const QString& pkgid, const QString& summary);
@@ -80,27 +90,36 @@ class DISCOVERCOMMON_EXPORT PackageKitBackend : public AbstractResourcesBackend
         void getUpdatesDetailsFinished(PackageKit::Transaction::Exit,uint);
 
     private:
-        void addTransaction(PKTransaction* trans);
-        void checkDaemonRunning();
+        template <typename T>
+        T resourcesByPackageNames(const QStringList& names) const;
         void fetchUpdates();
-        void acquireFetching(bool f);
 
-        Appstream::Database m_appdata;
-        QList<Transaction*> m_transactions;
+        void checkDaemonRunning();
+        void acquireFetching(bool f);
+        void includePackagesToAdd();
+        void performDetailsFetch();
+        AppPackageKitResource* addComponent(const AppStream::Component& component, const QStringList& pkgNames);
+
+        AppStream::Pool m_appdata;
         PackageKitUpdater* m_updater;
         QPointer<PackageKit::Transaction> m_refresher;
         int m_isFetching;
         QSet<QString> m_updatesPackageId;
-        QList<QAction*> m_messageActions;
+        bool m_hasSecurityUpdates = false;
+        QSet<PackageKitResource*> m_packagesToAdd;
+        QSet<PackageKitResource*> m_packagesToDelete;
 
         struct Packages {
             QHash<QString, AbstractResource*> packages;
             QHash<QString, QStringList> packageToApp;
             QHash<QString, QVector<AppPackageKitResource*>> extendedBy;
+            void clear() { *this = {}; }
         };
 
+        QTimer m_delayedDetailsFetch;
+        QSet<QString> m_packageNamesToFetchDetails;
         Packages m_packages;
-        Packages m_updatingPackages;
+        QSharedPointer<OdrsReviewsBackend> m_reviews;
 };
 
 #endif // PACKAGEKITBACKEND_H

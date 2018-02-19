@@ -25,11 +25,14 @@
 #include <QUrl>
 #include <QStringList>
 #include <QScopedPointer>
+#include <QVector>
 #include <QCollatorSortKey>
+#include <QJsonObject>
 
 #include "discovercommon_export.h"
 #include "PackageState.h"
 
+class Category;
 class Rating;
 class AbstractResourcesBackend;
 
@@ -37,7 +40,7 @@ class AbstractResourcesBackend;
  * \class AbstractResource  AbstractResource.h "AbstractResource.h"
  *
  * \brief This is the base class of all resources.
- * 
+ *
  * Each backend must reimplement its own resource class which needs to derive from this one.
  */
 class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
@@ -46,28 +49,34 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
     Q_PROPERTY(QString name READ name CONSTANT)
     Q_PROPERTY(QString packageName READ packageName CONSTANT)
     Q_PROPERTY(QString comment READ comment CONSTANT)
-    Q_PROPERTY(QString icon READ icon CONSTANT)
+    Q_PROPERTY(QVariant icon READ icon NOTIFY iconChanged)
     Q_PROPERTY(bool canExecute READ canExecute CONSTANT)
     Q_PROPERTY(State state READ state NOTIFY stateChanged)
     Q_PROPERTY(QString status READ status NOTIFY stateChanged)
     Q_PROPERTY(QStringList category READ categories CONSTANT)
     Q_PROPERTY(bool isTechnical READ isTechnical CONSTANT)
     Q_PROPERTY(QUrl homepage READ homepage CONSTANT)
-    Q_PROPERTY(QUrl thumbnailUrl READ thumbnailUrl CONSTANT)
-    Q_PROPERTY(QUrl screenshotUrl READ screenshotUrl CONSTANT)
+    Q_PROPERTY(QUrl helpURL READ helpURL CONSTANT)
+    Q_PROPERTY(QUrl bugURL READ bugURL CONSTANT)
+    Q_PROPERTY(QUrl donationURL READ donationURL CONSTANT)
     Q_PROPERTY(bool canUpgrade READ canUpgrade NOTIFY stateChanged)
     Q_PROPERTY(bool isInstalled READ isInstalled NOTIFY stateChanged)
     Q_PROPERTY(QString license READ license CONSTANT)
     Q_PROPERTY(QString longDescription READ longDescription CONSTANT)
     Q_PROPERTY(QString origin READ origin CONSTANT)
-    Q_PROPERTY(int size READ size NOTIFY stateChanged)
-    Q_PROPERTY(QString sizeDescription READ sizeDescription NOTIFY stateChanged)
+    Q_PROPERTY(QString displayOrigin READ displayOrigin CONSTANT)
+    Q_PROPERTY(int size READ size NOTIFY sizeChanged)
+    Q_PROPERTY(QString sizeDescription READ sizeDescription NOTIFY sizeChanged)
     Q_PROPERTY(QString installedVersion READ installedVersion NOTIFY stateChanged)
     Q_PROPERTY(QString availableVersion READ availableVersion NOTIFY stateChanged)
     Q_PROPERTY(QString section READ section CONSTANT)
     Q_PROPERTY(QStringList mimetypes READ mimetypes CONSTANT)
     Q_PROPERTY(AbstractResourcesBackend* backend READ backend CONSTANT)
     Q_PROPERTY(Rating* rating READ rating NOTIFY ratingFetched)
+    Q_PROPERTY(QString appstreamId READ appstreamId CONSTANT)
+    Q_PROPERTY(QString categoryDisplay READ categoryDisplay CONSTANT)
+    Q_PROPERTY(QUrl url READ url CONSTANT)
+    Q_PROPERTY(QString executeLabel READ executeLabel CONSTANT)
     public:
         /**
          * This describes the state of the resource
@@ -90,12 +99,13 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
              */
             Upgradeable
         };
-        Q_ENUMS(State)
+        Q_ENUM(State)
 
         /**
          * Constructs the AbstractResource with its corresponding backend
          */
         explicit AbstractResource(AbstractResourcesBackend* parent);
+        ~AbstractResource() override;
 
         ///used as internal identification of a resource
         virtual QString packageName() const = 0;
@@ -106,27 +116,29 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
         ///short description of the resource
         virtual QString comment() = 0;
 
-        ///xdg-compatible icon name to represent the resource
-        virtual QString icon() const = 0;
+        ///xdg-compatible icon name to represent the resource, url or QIcon
+        virtual QVariant icon() const = 0;
 
         ///@returns whether invokeApplication makes something
         /// false if not overridden
-        virtual bool canExecute() const;
+        virtual bool canExecute() const = 0;
 
         ///executes the resource, if applies.
-        Q_SCRIPTABLE virtual void invokeApplication() const;
+        Q_SCRIPTABLE virtual void invokeApplication() const = 0;
 
         virtual State state() = 0;
 
         virtual QStringList categories() = 0;
-
-        ///@returns a URL that points to the content
-        virtual QUrl homepage() = 0;
+        ///@returns a URL that points to the app's website
+        virtual QUrl homepage();
+        ///@returns a URL that points to the app's online documentation
+        virtual QUrl helpURL();
+        ///@returns a URL that points to the place where you can file a bug
+        virtual QUrl bugURL();
+        ///@returns a URL that points to the place where you can donate money to the app developer
+        virtual QUrl donationURL();
 
         virtual bool isTechnical() const;
-
-        virtual QUrl thumbnailUrl() = 0;
-        virtual QUrl screenshotUrl() = 0;
 
         virtual int size() = 0;
         virtual QString sizeDescription();
@@ -137,15 +149,20 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
         virtual QString longDescription() = 0;
 
         virtual QString origin() const = 0;
+        QString displayOrigin() const;
         virtual QString section() = 0;
 
         ///@returns what kind of mime types the resource can consume
         virtual QStringList mimetypes() const;
 
         virtual QList<PackageState> addonsInformation() = 0;
-        bool isFromSecureOrigin() const;
 
-        virtual QStringList executables() const;
+        virtual QStringList extends() const;
+
+        virtual QString appstreamId() const;
+
+        void addMetadata(const QString &key, const QJsonValue &value);
+        QJsonValue getMetadata(const QString &key);
 
         bool canUpgrade();
         bool isInstalled();
@@ -157,7 +174,7 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
         AbstractResourcesBackend* backend() const;
 
         /**
-         * @returns a name sort key for faster sorting 
+         * @returns a name sort key for faster sorting
          */
         QCollatorSortKey nameSortKey();
 
@@ -168,11 +185,29 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
          */
         Rating* rating() const;
 
+        /**
+         * @returns a string defining the categories the resource belongs to
+         */
+        QString categoryDisplay() const;
+
+        bool categoryMatches(Category* cat);
+
+        QSet<Category*> categoryObjects(const QVector<Category*>& cats) const;
+
+        /**
+         * @returns a url that uniquely identifies the application
+         */
+        virtual QUrl url() const;
+
+        virtual QString executeLabel() const;
+
     public Q_SLOTS:
         virtual void fetchScreenshots();
         virtual void fetchChangelog() = 0;
 
     Q_SIGNALS:
+        void iconChanged();
+        void sizeChanged();
         void stateChanged();
         void ratingFetched();
 
@@ -182,8 +217,13 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
         void changelogFetched(const QString& changelog);
 
     private:
+        void reportNewState();
+
 //         TODO: make it std::optional or make QCollatorSortKey()
         QScopedPointer<QCollatorSortKey> m_collatorKey;
+        QJsonObject m_metadata;
 };
+
+Q_DECLARE_METATYPE(QVector<AbstractResource*>)
 
 #endif // ABSTRACTRESOURCE_H

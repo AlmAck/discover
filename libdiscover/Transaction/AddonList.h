@@ -35,7 +35,7 @@ public:
         ToRemove
     };
     AddonList();
-    AddonList(const AddonList &other);
+    AddonList(const AddonList &other) = default;
 
     bool isEmpty() const;
     QStringList addonsToInstall() const;
@@ -50,5 +50,7 @@ private:
     QStringList m_toInstall;
     QStringList m_toRemove;
 };
+
+DISCOVERCOMMON_EXPORT QDebug operator<<(QDebug dbg, const AddonList& addons);
 
 #endif // ADDONLIST_H

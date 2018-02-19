@@ -19,9 +19,12 @@
  ***************************************************************************/
 
 #include "ResourcesUpdatesModel.h"
+#include <Transaction/Transaction.h>
+#include <Transaction/TransactionModel.h>
 #include "ResourcesModel.h"
 #include "AbstractBackendUpdater.h"
 #include "AbstractResource.h"
+#include "utils.h"
 #include <QDateTime>
 #include <QDBusConnection>
 #include <QDBusInterface>
@@ -32,92 +35,120 @@
 #include <KLocalizedString>
 #include <KFormat>
 
+class UpdateTransaction : public Transaction
+{
+    Q_OBJECT
+public:
+    UpdateTransaction(ResourcesUpdatesModel* /*parent*/, const QVector<AbstractBackendUpdater*> &updaters)
+        : Transaction(nullptr, nullptr, Transaction::InstallRole)
+        , m_allUpdaters(updaters)
+    {
+        bool cancelable = false;
+        foreach(auto updater, m_allUpdaters) {
+            connect(updater, &AbstractBackendUpdater::progressingChanged, this, &UpdateTransaction::slotProgressingChanged);
+            connect(updater, &AbstractBackendUpdater::progressChanged, this, &UpdateTransaction::slotUpdateProgress);
+            connect(updater, &AbstractBackendUpdater::proceedRequest, this, &UpdateTransaction::processProceedRequest);
+            cancelable |= updater->isCancelable();
+        }
+        setCancellable(cancelable);
+    }
+
+    void processProceedRequest(const QString &title, const QString& message) {
+        m_updatersWaitingForFeedback += qobject_cast<AbstractBackendUpdater*>(sender());
+        Q_EMIT proceedRequest(title, message);
+    }
+
+    void cancel() override {
+        QVector<AbstractBackendUpdater*> toCancel = m_updatersWaitingForFeedback.isEmpty() ? m_allUpdaters : m_updatersWaitingForFeedback;
+
+        foreach(auto updater, m_updatersWaitingForFeedback) {
+            updater->cancel();
+        }
+    }
+
+    void proceed() override {
+        m_updatersWaitingForFeedback.takeFirst()->proceed();
+    }
+
+    bool isProgressing() const
+    {
+        bool progressing = false;
+        foreach(AbstractBackendUpdater* upd, m_allUpdaters) {
+            progressing |= upd->isProgressing();
+        }
+        return progressing;
+    }
+
+    void slotProgressingChanged()
+    {
+        if (status() < DoneStatus && !isProgressing()) {
+            setStatus(Transaction::DoneStatus);
+            Q_EMIT finished();
+            deleteLater();
+        }
+    }
+
+    void slotUpdateProgress()
+    {
+        qreal total = 0;
+        foreach(AbstractBackendUpdater* updater, m_allUpdaters) {
+            total += updater->progress();
+        }
+        setProgress(total / m_allUpdaters.count());
+    }
+
+    QVariant icon() const override { return QStringLiteral("update-low"); }
+    QString name() const override { return i18n("Update"); }
+
+Q_SIGNALS:
+    void finished();
+
+private:
+    QVector<AbstractBackendUpdater*> m_updatersWaitingForFeedback;
+    const QVector<AbstractBackendUpdater*> m_allUpdaters;
+};
+
 ResourcesUpdatesModel::ResourcesUpdatesModel(QObject* parent)
     : QStandardItemModel(parent)
-    , m_resources(nullptr)
     , m_lastIsProgressing(false)
-    , m_kded(nullptr)
+    , m_transaction(nullptr)
 {
-    setResourcesModel(ResourcesModel::global());
+    connect(ResourcesModel::global(), &ResourcesModel::backendsChanged, this, &ResourcesUpdatesModel::init);
+
+    init();
 }
 
-void ResourcesUpdatesModel::setResourcesModel(ResourcesModel* model)
+void ResourcesUpdatesModel::init()
 {
-    Q_ASSERT(model);
-    m_resources = model;
-    m_updaters.clear();
-    addNewBackends();
-    connect(model, &ResourcesModel::backendsChanged, this, &ResourcesUpdatesModel::addNewBackends);
-}
-
-void ResourcesUpdatesModel::addNewBackends()
-{
-    QVector<AbstractResourcesBackend*> backends = ResourcesModel::global()->backends();
+    const QVector<AbstractResourcesBackend*> backends = ResourcesModel::global()->backends();
+    m_lastIsProgressing = false;
     foreach(AbstractResourcesBackend* b, backends) {
         AbstractBackendUpdater* updater = b->backendUpdater();
         if(updater && !m_updaters.contains(updater)) {
-            connect(updater, &AbstractBackendUpdater::progressChanged, this, &ResourcesUpdatesModel::progressChanged);
-            connect(updater, &AbstractBackendUpdater::statusMessageChanged, this, &ResourcesUpdatesModel::statusMessageChanged);
             connect(updater, &AbstractBackendUpdater::statusMessageChanged, this, &ResourcesUpdatesModel::message);
             connect(updater, &AbstractBackendUpdater::statusDetailChanged, this, &ResourcesUpdatesModel::message);
-            connect(updater, &AbstractBackendUpdater::statusDetailChanged, this, &ResourcesUpdatesModel::statusDetailChanged);
-            connect(updater, &AbstractBackendUpdater::remainingTimeChanged, this, &ResourcesUpdatesModel::etaChanged);
             connect(updater, &AbstractBackendUpdater::downloadSpeedChanged, this, &ResourcesUpdatesModel::downloadSpeedChanged);
-            connect(updater, &AbstractBackendUpdater::progressingChanged, this, &ResourcesUpdatesModel::slotProgressingChanged);
-            connect(updater, &AbstractBackendUpdater::cancelableChanged, this, &ResourcesUpdatesModel::cancelableChanged);
             connect(updater, &AbstractBackendUpdater::resourceProgressed, this, &ResourcesUpdatesModel::resourceProgressed);
+            connect(updater, &AbstractBackendUpdater::passiveMessage, this, &ResourcesUpdatesModel::passiveMessage);
             connect(updater, &AbstractBackendUpdater::destroyed, this, &ResourcesUpdatesModel::updaterDestroyed);
             m_updaters += updater;
+
+            m_lastIsProgressing |= updater->isProgressing();
+        }
+    }
+
+    auto tm = TransactionModel::global();
+    foreach(auto t, tm->transactions()) {
+        auto updateTransaction = qobject_cast<UpdateTransaction*>(t);
+        if (updateTransaction) {
+            setTransaction(updateTransaction);
         }
     }
 }
 
 void ResourcesUpdatesModel::updaterDestroyed(QObject* obj)
 {
-//     TODO: use removeAll when build.kde.org doesn't complain about Qt 5.4 API usage...
-    int idx = m_updaters.indexOf(qobject_cast<AbstractBackendUpdater*>(obj));
-    if (idx>=0)
-        m_updaters.remove(idx);
-}
-
-void ResourcesUpdatesModel::slotProgressingChanged(bool progressing)
-{
-    Q_UNUSED(progressing);
-    const bool newProgressing = isProgressing();
-    if (newProgressing != m_lastIsProgressing) {
-        m_lastIsProgressing = newProgressing;
-        if (!m_lastIsProgressing) {
-            if (!m_kded)
-                m_kded = new QDBusInterface(QStringLiteral("org.kde.kded"), QStringLiteral("/kded"),
-                                            QStringLiteral("org.kde.kded"), QDBusConnection::sessionBus(), this);
-            QDBusReply<QStringList> lM = m_kded->call(QStringLiteral("loadedModules"));
-            QStringList services = lM.value();
-            foreach (const QString &service, services) {
-                if (!service.startsWith(QLatin1String("muon")))
-                    continue;
-                
-                QDBusMessage message = QDBusMessage::createMethodCall(QStringLiteral("org.kde.kded"),
-                                        QStringLiteral("/modules/") + service,
-                                        QStringLiteral("org.kde.kded.AbstractKDEDModule"),
-                                        QStringLiteral("recheckSystemUpdateNeeded"));
-                QDBusConnection::sessionBus().send(message);
-            }
-        }
-        emit progressingChanged(newProgressing);
-
-        if (!newProgressing) {
-            Q_EMIT finished();
-        }
-    }
-}
-
-qreal ResourcesUpdatesModel::progress() const
-{
-    qreal total = 0;
-    foreach(AbstractBackendUpdater* updater, m_updaters) {
-        total += updater->progress();
-    }
-    return total / m_updaters.count();
+    m_updaters.removeAll(static_cast<AbstractBackendUpdater*>(obj));
 }
 
 void ResourcesUpdatesModel::message(const QString& msg)
@@ -130,6 +161,10 @@ void ResourcesUpdatesModel::message(const QString& msg)
 
 void ResourcesUpdatesModel::prepare()
 {
+    if(isProgressing()) {
+        qWarning() << "trying to set up a running instance";
+        return;
+    }
     foreach(AbstractBackendUpdater* upd, m_updaters) {
         upd->prepare();
     }
@@ -137,78 +172,23 @@ void ResourcesUpdatesModel::prepare()
 
 void ResourcesUpdatesModel::updateAll()
 {
-    Q_ASSERT(m_resources);
-    
-    if(m_updaters.isEmpty())
-        emit progressingChanged(false);
-    else {
-        Q_FOREACH (AbstractBackendUpdater* upd, m_updaters) {
-            if (upd->hasUpdates())
-                QMetaObject::invokeMethod(upd, "start", Qt::QueuedConnection);
+    if (!m_updaters.isEmpty()) {
+        delete m_transaction;
+
+        const auto updaters = kFilter<QVector<AbstractBackendUpdater*>>(m_updaters, [](AbstractBackendUpdater* u) {return u->hasUpdates(); });
+
+        m_transaction = new UpdateTransaction(this, updaters);
+        setTransaction(m_transaction);
+        TransactionModel::global()->addTransaction(m_transaction);
+        Q_FOREACH (AbstractBackendUpdater* upd, updaters) {
+            QMetaObject::invokeMethod(upd, "start", Qt::QueuedConnection);
         }
     }
 }
 
-
-QString ResourcesUpdatesModel::remainingTime() const
-{
-    long unsigned int maxEta = 0;
-    foreach(AbstractBackendUpdater* upd, m_updaters) {
-        maxEta = qMax(maxEta, upd->remainingTime());
-    }
-
-    // Ignore ETA if it's larger than 2 days.
-    if(maxEta > 2 * 24 * 60 * 60)
-        return QString();
-    else if(maxEta==0)
-        return i18nc("@item:intext Unknown remaining time", "Updating...");
-    else
-        return i18nc("@item:intext Remaining time", "%1 remaining", KFormat().formatDuration(maxEta));
-}
-
-bool ResourcesUpdatesModel::hasUpdates() const
-{
-    bool ret = false;
-    foreach(AbstractBackendUpdater* upd, m_updaters) {
-        ret |= upd->hasUpdates();
-    }
-    return ret;
-}
-
-quint64 ResourcesUpdatesModel::downloadSpeed() const
-{
-    quint64 ret = 0;
-    foreach(AbstractBackendUpdater* upd, m_updaters) {
-        ret += upd->downloadSpeed();
-    }
-    return ret;
-}
-
-bool ResourcesUpdatesModel::isCancelable() const
-{
-    bool cancelable = false;
-    foreach(AbstractBackendUpdater* upd, m_updaters) {
-        cancelable |= upd->isCancelable();
-    }
-    return cancelable;
-}
-
 bool ResourcesUpdatesModel::isProgressing() const
 {
-    bool progressing = false;
-    foreach(AbstractBackendUpdater* upd, m_updaters) {
-        progressing |= upd->isProgressing();
-    }
-    return progressing;
-}
-
-bool ResourcesUpdatesModel::isAllMarked() const
-{
-    bool allmarked = false;
-    foreach(AbstractBackendUpdater* upd, m_updaters) {
-        allmarked |= upd->isAllMarked();
-    }
-    return allmarked;
+    return m_transaction && m_transaction->status() < Transaction::DoneStatus;
 }
 
 QList<AbstractResource*> ResourcesUpdatesModel::toUpdate() const
@@ -256,17 +236,32 @@ QDateTime ResourcesUpdatesModel::lastUpdate() const
     return ret;
 }
 
-void ResourcesUpdatesModel::cancel()
+double ResourcesUpdatesModel::updateSize() const
 {
-    foreach(AbstractBackendUpdater* upd, m_updaters) {
-        if(upd->isCancelable())
-            upd->cancel();
-        else
-            qWarning() << "tried to cancel " << upd->metaObject()->className() << "which is not cancelable";
+    double ret = 0.;
+    for(AbstractBackendUpdater* upd: m_updaters) {
+        ret += upd->updateSize();
     }
+    return ret;
 }
 
 qint64 ResourcesUpdatesModel::secsToLastUpdate() const
 {
     return lastUpdate().secsTo(QDateTime::currentDateTime());
 }
+
+void ResourcesUpdatesModel::setTransaction(UpdateTransaction* transaction)
+{
+    m_transaction = transaction;
+    connect(transaction, &UpdateTransaction::finished, this, &ResourcesUpdatesModel::finished);
+    connect(transaction, &UpdateTransaction::finished, this, &ResourcesUpdatesModel::progressingChanged);
+
+    Q_EMIT progressingChanged();
+}
+
+Transaction* ResourcesUpdatesModel::transaction() const
+{
+    return m_transaction.data();
+}
+
+#include "ResourcesUpdatesModel.moc"

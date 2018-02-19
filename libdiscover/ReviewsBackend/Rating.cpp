@@ -96,35 +96,55 @@ double dampenedRating(const QVector<int> &ratings, double power = 0.1)
     return sum_scores + 3;
 }
 
-Rating::Rating(const QVariantMap &data)
+Rating::Rating(const QString &packageName, quint64 ratingCount, const QVariantMap &data)
     : QObject()
+    , m_packageName(packageName)
+    , m_ratingCount(ratingCount)
+    // TODO consider storing this and present in UI
+    , m_rating(((data.value(QStringLiteral("star1")).toInt() + (data.value(QStringLiteral("star2")).toInt() * 2) +
+                (data.value(QStringLiteral("star3")).toInt() * 3) + (data.value(QStringLiteral("star4")).toInt() * 4) +
+                (data.value(QStringLiteral("star5")).toInt() * 5)) * 2) / (float) ratingCount)
+    , m_ratingPoints(0)
+    , m_sortableRating(0)
 {
-    init(data.value(QStringLiteral("package_name")).toString(),
-         data.value(QStringLiteral("ratings_total")).toULongLong(), data.value(QStringLiteral("ratings_average")).toDouble() * 2, data.value(QStringLiteral("histogram")).toString());
+    const QVector<int> histo = { data.value(QStringLiteral("star1")).toInt(), data.value(QStringLiteral("star2")).toInt(),
+                                 data.value(QStringLiteral("star3")).toInt(), data.value(QStringLiteral("star4")).toInt(),
+                                 data.value(QStringLiteral("star5")).toInt() };
+    QVector<int> spread;
+    spread.reserve(histo.size());
+
+    for(int i=0; i<histo.size(); ++i) {
+        int points = histo[i];
+        m_ratingPoints += (i+1)*points;
+        spread.append(points);
+    }
+
+    m_sortableRating = dampenedRating(spread) * 2;
 }
 
-Rating::Rating(const QString& packageName, int ratingCount, int rating, const QString& histogram)
+Rating::Rating(QString packageName, int inst)
     : QObject()
+    , m_packageName(std::move(packageName))
+    , m_ratingCount(inst)
+    , m_rating(0)
+    , m_ratingPoints(0)
+    , m_sortableRating(m_rating)
 {
-    init(packageName, ratingCount, rating, histogram);
 }
 
-Rating::Rating(const QString& packageName, QStringList histogram)
+Rating::Rating(const QString &packageName, quint64 ratingCount, double rating, const QString &histogram)
     : QObject()
+    , m_packageName(packageName)
+    , m_ratingCount(ratingCount)
+    , m_rating(rating)
+    , m_ratingPoints(0)
+    , m_sortableRating(0)
 {
-    debInit(packageName,histogram);
-}
+    Q_ASSERT(rating <= 10 && rating>=-1);
 
-void Rating::init(const QString& packageName, int ratingCount, int rating, const QString& histogram)
-{
-    m_packageName = packageName;
-    m_ratingCount = ratingCount;
-    m_rating = rating;
-    m_ratingPoints = 0;
-    m_sortableRating = 0;
-
-    QStringList histo = histogram.mid(1,histogram.size()-2).split(QStringLiteral(", "));
-    QVector<int> spread = QVector<int>();
+    const auto histo = histogram.midRef(1,histogram.size()-2).split(QStringLiteral(", "));
+    QVector<int> spread;
+    spread.reserve(histo.size());
 
     for(int i=0; i<histo.size(); ++i) {
         int points = histo[i].toInt();
@@ -135,38 +155,7 @@ void Rating::init(const QString& packageName, int ratingCount, int rating, const
     m_sortableRating = dampenedRating(spread) * 2;
 }
 
-void Rating::debInit(const QString& packageName, QStringList histogram)
-{
-    int installed = 0;
-    m_packageName = packageName;
-    m_sortableRating = 0;
-    //inst, vote, old, recent, no-files
-    QVector<int> values = QVector<int>();
-    histogram.removeDuplicates();
-    for(int i=1; i<histogram.count(); ++i) {
-        int points = histogram[i].toInt();
-        installed+=points;
-        values.append(points);
-    }
-    m_sortableRating = values[0];
-    m_ratingCount = installed;
-
-    if (installed) {
-        m_rating = values[0]/(m_ratingCount*1.0)*10;
-    } else {
-        m_rating = 0;
-    }
-
-    if (values[0]-values[1]) {
-        m_ratingPoints = (values[2]*1.0)/(values[0]-values[1]);
-    } else {
-        m_ratingPoints = 0;
-    }
-}
-
-Rating::~Rating()
-{
-}
+Rating::~Rating() = default;
 
 QString Rating::packageName() const
 {
@@ -178,7 +167,7 @@ quint64 Rating::ratingCount() const
     return m_ratingCount;
 }
 
-int Rating::rating() const
+float Rating::rating() const
 {
     return m_rating;
 }

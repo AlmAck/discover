@@ -21,13 +21,33 @@
 #include "PackageKitMessages.h"
 
 #include <PackageKit/Daemon>
+#ifdef PKQT_1_0
+#include <PackageKit/Offline>
+#endif
 #include <QDebug>
-#include <QMessageBox>
 #include <QAction>
 #include <QSet>
 
 #include <KLocalizedString>
-#include <QIcon>
+
+static int percentageWithStatus(PackageKit::Transaction::Status status, uint percentage)
+{
+    if (status != PackageKit::Transaction::StatusUnknown) {
+        static const QMap<PackageKit::Transaction::Status, int> statuses = {
+            { PackageKit::Transaction::Status::StatusDownload, 0 },
+            { PackageKit::Transaction::Status::StatusInstall, 1},
+            { PackageKit::Transaction::Status::StatusUpdate, 1}
+        };
+        const auto idx = statuses.value(status, -1);
+        if (idx < 0) {
+            qDebug() << "Status not present" << status << "among" << statuses   .keys() << percentage;
+            return -1;
+        }
+        percentage = (idx * 100 + percentage) / 2 /*the maximum in statuses*/;
+    }
+    qDebug() << "reporing progress with status:" << status << percentage;
+    return percentage;
+}
 
 PackageKitUpdater::PackageKitUpdater(PackageKitBackend * parent)
   : AbstractBackendUpdater(parent),
@@ -35,47 +55,37 @@ PackageKitUpdater::PackageKitUpdater(PackageKitBackend * parent)
     m_backend(parent),
     m_isCancelable(false),
     m_isProgressing(false),
-    m_speed(0),
-    m_remainingTime(0),
     m_percentage(0),
     m_lastUpdate()
 {
-    m_updateAction = new QAction(this);
-    m_updateAction->setIcon(QIcon::fromTheme(QStringLiteral("system-software-update")));
-    m_updateAction->setText(i18nc("@action Checks the Internet for updates", "Check for Updates"));
-    m_updateAction->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_R));
-    m_updateAction->setEnabled(PackageKit::Daemon::networkState() != PackageKit::Daemon::NetworkOffline);
-    connect(m_updateAction, &QAction::triggered, parent, &PackageKitBackend::refreshDatabase);
-
     fetchLastUpdateTime();
 }
 
 PackageKitUpdater::~PackageKitUpdater()
 {
-    delete m_transaction;
 }
 
 void PackageKitUpdater::prepare()
 {
     Q_ASSERT(!m_transaction);
-    m_toUpgrade = m_backend->upgradeablePackages().toSet();
+    m_toUpgrade = m_backend->upgradeablePackages();
     m_allUpgradeable = m_toUpgrade;
 }
 
-void PackageKitUpdater::setTransaction(PackageKit::Transaction* transaction)
+void PackageKitUpdater::setupTransaction(PackageKit::Transaction::TransactionFlags flags)
 {
-    m_transaction = transaction;
-    m_isCancelable = transaction->allowCancel();
+    m_packagesRemoved.clear();
+    m_transaction = PackageKit::Daemon::updatePackages(involvedPackages(m_toUpgrade).toList(), flags);
+    m_isCancelable = m_transaction->allowCancel();
 
     connect(m_transaction.data(), &PackageKit::Transaction::finished, this, &PackageKitUpdater::finished);
+    connect(m_transaction.data(), &PackageKit::Transaction::package, this, &PackageKitUpdater::packageResolved);
     connect(m_transaction.data(), &PackageKit::Transaction::errorCode, this, &PackageKitUpdater::errorFound);
     connect(m_transaction.data(), &PackageKit::Transaction::mediaChangeRequired, this, &PackageKitUpdater::mediaChange);
     connect(m_transaction.data(), &PackageKit::Transaction::requireRestart, this, &PackageKitUpdater::requireRestart);
     connect(m_transaction.data(), &PackageKit::Transaction::eulaRequired, this, &PackageKitUpdater::eulaRequired);
-    connect(m_transaction.data(), &PackageKit::Transaction::statusChanged, this, &PackageKitUpdater::statusChanged);
-    connect(m_transaction.data(), &PackageKit::Transaction::speedChanged, this, &PackageKitUpdater::speedChanged);
+    connect(m_transaction.data(), &PackageKit::Transaction::repoSignatureRequired, this, &PackageKitUpdater::repoSignatureRequired);
     connect(m_transaction.data(), &PackageKit::Transaction::allowCancelChanged, this, &PackageKitUpdater::cancellableChanged);
-    connect(m_transaction.data(), &PackageKit::Transaction::remainingTimeChanged, this, &PackageKitUpdater::remainingTimeChanged);
     connect(m_transaction.data(), &PackageKit::Transaction::percentageChanged, this, &PackageKitUpdater::percentageChanged);
     connect(m_transaction.data(), &PackageKit::Transaction::itemProgress, this, &PackageKitUpdater::itemProgress);
 }
@@ -83,6 +93,7 @@ void PackageKitUpdater::setTransaction(PackageKit::Transaction* transaction)
 QSet<AbstractResource*> PackageKitUpdater::packagesForPackageId(const QSet<QString>& pkgids) const
 {
     QSet<QString> packages;
+    packages.reserve(pkgids.size());
     foreach(const QString& pkgid, pkgids) {
         packages += PackageKit::Daemon::packageName(pkgid);
     }
@@ -110,22 +121,74 @@ QSet<QString> PackageKitUpdater::involvedPackages(const QSet<AbstractResource*>&
     return packageIds;
 }
 
+void PackageKitUpdater::processProceedFunction()
+{
+    auto t = m_proceedFunctions.takeFirst()();
+    connect(t, &PackageKit::Transaction::finished, this, [this](PackageKit::Transaction::Exit status) {
+        if (status != PackageKit::Transaction::Exit::ExitSuccess) {
+            qWarning() << "transaction failed" << sender() << status;
+            cancel();
+            return;
+        }
+
+        if (!m_proceedFunctions.isEmpty()) {
+            processProceedFunction();
+        } else {
+            start();
+        }
+    });
+}
+
+void PackageKitUpdater::proceed()
+{
+    if (!m_proceedFunctions.isEmpty())
+        processProceedFunction();
+#ifdef PKQT_1_0
+    else if (qEnvironmentVariableIsSet("PK_OFFLINE_UPDATE"))
+        setupTransaction(PackageKit::Transaction::TransactionFlagOnlyTrusted | PackageKit::Transaction::TransactionFlagOnlyDownload);
+#endif
+    else
+        setupTransaction(PackageKit::Transaction::TransactionFlagOnlyTrusted);
+}
+
 void PackageKitUpdater::start()
 {
-    setTransaction(PackageKit::Daemon::updatePackages(involvedPackages(m_toUpgrade).toList()));
+    Q_ASSERT(!isProgressing());
+
+    setupTransaction(PackageKit::Transaction::TransactionFlagSimulate);
     setProgressing(true);
 }
 
-void PackageKitUpdater::finished(PackageKit::Transaction::Exit exit, uint )
+void PackageKitUpdater::finished(PackageKit::Transaction::Exit exit, uint /*time*/)
 {
-    if (exit == PackageKit::Transaction::ExitEulaRequired)
+//     qDebug() << "update finished!" << exit << time;
+    if (!m_proceedFunctions.isEmpty())
         return;
+    const bool cancel = exit == PackageKit::Transaction::ExitCancelled;
+    const bool simulate = m_transaction->transactionFlags() & PackageKit::Transaction::TransactionFlagSimulate;
+
     disconnect(m_transaction, nullptr, this, nullptr);
     m_transaction = nullptr;
+
+    if (!cancel && simulate) {
+        if (!m_packagesRemoved.isEmpty())
+            Q_EMIT proceedRequest(i18n("Packages to remove"), i18n("The following packages will be removed by the update:\n<ul><li>%1</li></ul>", PackageKitResource::joinPackages(m_packagesRemoved, QStringLiteral("</li><li>"))));
+        else {
+            proceed();
+        }
+        return;
+    }
 
     setProgressing(false);
     m_backend->refreshDatabase();
     fetchLastUpdateTime();
+
+    if (qEnvironmentVariableIsSet("PK_OFFLINE_UPDATE"))
+#ifdef PKQT_1_0
+        PackageKit::Daemon::global()->offline()->trigger(PackageKit::Offline::ActionReboot);
+#else
+        qWarning() << "PK_OFFLINE_UPDATE is set but discover was built against an old version of PackageKitQt that didn't support offline updates";
+#endif
 }
 
 void PackageKitUpdater::cancellableChanged()
@@ -138,37 +201,10 @@ void PackageKitUpdater::cancellableChanged()
 
 void PackageKitUpdater::percentageChanged()
 {
-    if (m_percentage != m_transaction->percentage()) {
-        m_percentage = m_transaction->percentage();
+    const auto actualPercentage = percentageWithStatus(m_transaction->status(), m_transaction->percentage());
+    if (actualPercentage >= 0 && m_percentage != actualPercentage) {
+        m_percentage = actualPercentage;
         emit progressChanged(m_percentage);
-    }
-}
-
-void PackageKitUpdater::remainingTimeChanged()
-{
-    if (m_remainingTime != m_transaction->remainingTime()) {
-        m_remainingTime = m_transaction->remainingTime();
-        emit remainingTimeChanged();
-    }
-}
-
-void PackageKitUpdater::speedChanged()
-{
-    if (m_speed != m_transaction->speed()) {
-        m_speed = m_transaction->speed();
-        emit downloadSpeedChanged(m_speed);
-    }
-}
-
-void PackageKitUpdater::statusChanged()
-{
-    if (m_status != m_transaction->status()) {
-        m_status = m_transaction->status();
-        m_statusMessage = PackageKitMessages::statusMessage(m_status);
-        m_statusDetail = PackageKitMessages::statusDetail(m_status);
-
-        emit statusMessageChanged(m_statusMessage);
-        emit statusDetailChanged(m_statusDetail);
     }
 }
 
@@ -180,12 +216,6 @@ bool PackageKitUpdater::hasUpdates() const
 qreal PackageKitUpdater::progress() const
 {
     return m_percentage;
-}
-
-/** proposed ETA in milliseconds */
-long unsigned int PackageKitUpdater::remainingTime() const
-{
-    return m_remainingTime;
 }
 
 void PackageKitUpdater::removeResources(const QList<AbstractResource*>& apps)
@@ -215,14 +245,9 @@ QDateTime PackageKitUpdater::lastUpdate() const
     return m_lastUpdate;
 }
 
-bool PackageKitUpdater::isAllMarked() const
-{
-    return m_toUpgrade.count() >= m_backend->updatesCount();
-}
-
 bool PackageKitUpdater::isCancelable() const
 {
-    return m_transaction->allowCancel();
+    return m_isCancelable;
 }
 
 bool PackageKitUpdater::isProgressing() const
@@ -230,62 +255,40 @@ bool PackageKitUpdater::isProgressing() const
     return m_isProgressing;
 }
 
-QString PackageKitUpdater::statusMessage() const
-{
-    return m_statusMessage;
-}
-
-QString PackageKitUpdater::statusDetail() const
-{
-    return m_statusDetail;
-}
-
-quint64 PackageKitUpdater::downloadSpeed() const
-{
-    return m_speed;
-}
-
-QList<QAction*> PackageKitUpdater::messageActions() const
-{
-    return QList<QAction*>() << m_updateAction;
-}
-
 void PackageKitUpdater::cancel()
 {
-    m_transaction->cancel();
+    if (m_transaction)
+        m_transaction->cancel();
+    else
+        setProgressing(false);
 }
 
 void PackageKitUpdater::errorFound(PackageKit::Transaction::Error err, const QString& error)
 {
-    Q_UNUSED(error);
     if (err == PackageKit::Transaction::ErrorNoLicenseAgreement)
         return;
-    QMessageBox::critical(nullptr, i18n("PackageKit error found"), PackageKitMessages::errorMessage(err));
+    Q_EMIT passiveMessage(QStringLiteral("%1\n%2").arg(PackageKitMessages::errorMessage(err), error));
     qWarning() << "Error happened" << err << error;
 }
 
 void PackageKitUpdater::mediaChange(PackageKit::Transaction::MediaType media, const QString& type, const QString& text)
 {
     Q_UNUSED(media)
-    QMessageBox::information(nullptr, i18n("PackageKit media change"), i18n("Media Change of type '%1' is requested.\n%2", type, text));
+    Q_EMIT passiveMessage(i18n("Media Change of type '%1' is requested.\n%2", type, text));
 }
 
 void PackageKitUpdater::requireRestart(PackageKit::Transaction::Restart restart, const QString& pkgid)
 {
-    QMessageBox::information(nullptr, i18n("PackageKit restart required"), PackageKitMessages::restartMessage(restart, pkgid));
+    Q_EMIT passiveMessage(PackageKitMessages::restartMessage(restart, pkgid));
 }
 
 void PackageKitUpdater::eulaRequired(const QString& eulaID, const QString& packageID, const QString& vendor, const QString& licenseAgreement)
 {
-    QString packageName = PackageKit::Daemon::packageName(packageID);
-    int ret = QMessageBox::question(nullptr, i18n("%1 requires user to accept its license", packageName), i18n("The package %1 and its vendor %2 require that you accept their license:\n %3",
-                                                 packageName, vendor, licenseAgreement), QMessageBox::Yes, QMessageBox::No);
-    if (ret == QMessageBox::Yes) {
-        PackageKit::Transaction* t = PackageKit::Daemon::acceptEula(eulaID);
-        connect(t, &PackageKit::Transaction::finished, this, &PackageKitUpdater::start);
-    } else {
-        finished(PackageKit::Transaction::ExitCancelled, 0);
-    }
+    m_proceedFunctions << [eulaID](){
+        return PackageKit::Daemon::acceptEula(eulaID);
+    };
+    Q_EMIT proceedRequest(i18n("Accept EULA"), i18n("The package %1 and its vendor %2 require that you accept their license:\n %3",
+                                                 PackageKit::Daemon::packageName(packageID), vendor, licenseAgreement));
 }
 
 void PackageKitUpdater::setProgressing(bool progressing)
@@ -314,11 +317,73 @@ void PackageKitUpdater::lastUpdateTimeReceived(QDBusPendingCallWatcher* w)
     w->deleteLater();
 }
 
-void PackageKitUpdater::itemProgress(const QString& itemID, PackageKit::Transaction::Status /*status*/, uint percentage)
+void PackageKitUpdater::itemProgress(const QString& itemID, PackageKit::Transaction::Status status, uint percentage)
 {
     auto res = packagesForPackageId({itemID});
 
+    const auto actualPercentage = percentageWithStatus(status, percentage);
+    if (actualPercentage<0)
+        return;
+
     foreach(auto r, res) {
-        resourceProgressed(r, percentage);
+        Q_EMIT resourceProgressed(r, actualPercentage);
     }
+}
+
+void PackageKitUpdater::fetchChangelog() const
+{
+    QStringList pkgids;
+    foreach(AbstractResource* res, m_allUpgradeable) {
+        pkgids += static_cast<PackageKitResource*>(res)->availablePackageId();
+    }
+    Q_ASSERT(!pkgids.isEmpty());
+
+    PackageKit::Transaction* t = PackageKit::Daemon::getUpdatesDetails(pkgids);
+    connect(t, &PackageKit::Transaction::updateDetail, this, &PackageKitUpdater::updateDetail);
+    connect(t, &PackageKit::Transaction::errorCode, this, &PackageKitUpdater::errorFound);
+}
+
+void PackageKitUpdater::updateDetail(const QString& packageID, const QStringList& updates, const QStringList& obsoletes, const QStringList& vendorUrls,
+                                      const QStringList& bugzillaUrls, const QStringList& cveUrls, PackageKit::Transaction::Restart restart, const QString& updateText,
+                                      const QString& changelog, PackageKit::Transaction::UpdateState state, const QDateTime& issued, const QDateTime& updated)
+{
+    auto res = packagesForPackageId({packageID});
+    foreach(auto r, res) {
+        static_cast<PackageKitResource*>(r)->updateDetail(packageID, updates, obsoletes, vendorUrls, bugzillaUrls,
+                                                          cveUrls, restart, updateText, changelog, state, issued, updated);
+    }
+}
+
+void PackageKitUpdater::packageResolved(PackageKit::Transaction::Info info, const QString& packageId)
+{
+    if (info == PackageKit::Transaction::InfoRemoving)
+        m_packagesRemoved << packageId;
+}
+
+void PackageKitUpdater::repoSignatureRequired(const QString& packageID, const QString& repoName, const QString& keyUrl,
+                                              const QString& keyUserid, const QString& keyId, const QString& keyFingerprint,
+                                              const QString& keyTimestamp, PackageKit::Transaction::SigType type)
+{
+    Q_EMIT proceedRequest(i18n("Missing signature for %1 in %2", packageID, repoName),
+                          i18n("Do you trust the following key?\n\nUrl: %1\nUser: %2\nKey: %3\nFingerprint: %4\nTimestamp: %4\n",
+                               keyUrl, keyUserid, keyFingerprint, keyTimestamp));
+
+    m_proceedFunctions << [type, keyId, packageID](){
+        return PackageKit::Daemon::installSignature(type, keyId, packageID);
+    };
+}
+
+double PackageKitUpdater::updateSize() const
+{
+    double ret = 0.;
+    QSet<QString> donePkgs;
+    for (AbstractResource * res : m_toUpgrade) {
+        PackageKitResource * app = qobject_cast<PackageKitResource*>(res);
+        QString pkgid = m_backend->upgradeablePackageId(app);
+        if (!donePkgs.contains(pkgid)) {
+            donePkgs.insert(pkgid);
+            ret += app->size();
+        }
+    }
+    return ret;
 }

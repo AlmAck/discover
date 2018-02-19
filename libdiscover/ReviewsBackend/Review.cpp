@@ -40,9 +40,7 @@ Review::Review(QString  name, QString  pkgName, QString  language, QString  summ
     , m_packageVersion(std::move(packageVersion))
 {}
 
-Review::~Review()
-{
-}
+Review::~Review() = default;
 
 bool Review::operator<(const Review &other) const
 {
@@ -127,4 +125,14 @@ ReviewsModel::UserChoice Review::usefulChoice() const
 void Review::setUsefulChoice(ReviewsModel::UserChoice useful)
 {
     m_usefulChoice = useful;
+}
+
+void Review::addMetadata(const QString &key, const QVariant &value)
+{
+    m_metadata.insert(key, value);
+}
+
+QVariant Review::getMetadata(const QString &key)
+{
+    return m_metadata.value(key);
 }

@@ -21,50 +21,32 @@
 #ifndef CATEGORYMODEL_H
 #define CATEGORYMODEL_H
 
-#include <QStandardItemModel>
+#include <QAbstractListModel>
+#include <QQmlParserStatus>
+#include "Category.h"
 
 #include "discovercommon_export.h"
 
-class Category;
-
-class DISCOVERCOMMON_EXPORT CategoryModel : public QStandardItemModel
+class DISCOVERCOMMON_EXPORT CategoryModel : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(Category* displayedCategory READ displayedCategory WRITE setDisplayedCategory NOTIFY categoryChanged)
+    Q_PROPERTY(QVariantList rootCategories READ rootCategoriesVL NOTIFY rootCategoriesChanged)
     public:
-        enum CategoryModelRole {
-            CategoryRole = Qt::UserRole + 1
-        };
-
-        enum CatViewType {
-            /// An invalid type
-            InvalidType = 0,
-            /// An AppView since there are no sub-cats
-            CategoryType = 1,
-            /// A SubCategoryView
-            SubCatType = 2
-        };
-        Q_ENUMS(CatViewType)
-
         explicit CategoryModel(QObject* parent = nullptr);
 
-        Category* categoryForRow(int row);
+        static CategoryModel* global();
 
-        void setDisplayedCategory(Category* c);
-        Category* displayedCategory() const;
-        virtual QHash< int, QByteArray > roleNames() const override;
-
-        Q_SCRIPTABLE static Category* findCategoryByName(const QString& name);
-        static void blacklistPlugin(const QString& name);
+        Q_SCRIPTABLE Category* findCategoryByName(const QString& name) const;
+        void blacklistPlugin(const QString& name);
+        QVector<Category*> rootCategories() const { return m_rootCategories; }
+        QVariantList rootCategoriesVL() const;
+        void populateCategories();
 
     Q_SIGNALS:
-        void categoryChanged(Category* displayedCategory);
+        void rootCategoriesChanged();
 
     private:
-        void categoryDeleted(QObject* cat);
-        void setCategories(const QList<Category *> &categoryList, const QString &rootName);
-
-        Category* m_currentCategory;
+        QVector<Category*> m_rootCategories;
 };
 
 #endif // CATEGORYMODEL_H

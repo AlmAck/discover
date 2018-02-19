@@ -25,80 +25,141 @@
 #include <QtCore/QSortFilterProxyModel>
 #include <QtCore/QString>
 #include <QStringList>
+#include <QQmlParserStatus>
 
 #include <Category/Category.h>
 
 #include "discovercommon_export.h"
 #include "AbstractResource.h"
+#include "AbstractResourcesBackend.h"
 
-namespace QApt {
-    class Backend;
-}
+class Transaction;
+class AggregatedResultsStream;
 
-class Application;
-
-class DISCOVERCOMMON_EXPORT ResourcesProxyModel : public QSortFilterProxyModel
+class DISCOVERCOMMON_EXPORT ResourcesProxyModel : public QAbstractListModel, public QQmlParserStatus
 {
     Q_OBJECT
-    Q_PROPERTY(QAbstractItemModel* sourceModel READ sourceModel WRITE setSourceModel)
-    Q_PROPERTY(bool shouldShowTechnical READ shouldShowTechnical WRITE setShouldShowTechnical NOTIFY showTechnicalChanged)
+    Q_INTERFACES(QQmlParserStatus)
+    Q_PROPERTY(Roles sortRole READ sortRole WRITE setSortRole NOTIFY sortRoleChanged)
+    Q_PROPERTY(Qt::SortOrder sortOrder READ sortOrder WRITE setSortOrder NOTIFY sortOrderChanged)
     Q_PROPERTY(Category* filteredCategory READ filteredCategory WRITE setFiltersFromCategory NOTIFY categoryChanged)
     Q_PROPERTY(QString originFilter READ originFilter WRITE setOriginFilter)
-    Q_PROPERTY(bool isShowingTechnical READ shouldShowTechnical WRITE setShouldShowTechnical NOTIFY showTechnicalChanged)
-    Q_PROPERTY(bool isSortingByRelevancy READ sortingByRelevancy WRITE setSortByRelevancy)
     Q_PROPERTY(AbstractResource::State stateFilter READ stateFilter WRITE setStateFilter NOTIFY stateFilterChanged)
     Q_PROPERTY(QString mimeTypeFilter READ mimeTypeFilter WRITE setMimeTypeFilter)
-    Q_PROPERTY(QString search READ lastSearch WRITE setSearch)
+    Q_PROPERTY(QString search READ lastSearch WRITE setSearch NOTIFY searchChanged)
+    Q_PROPERTY(QUrl resourcesUrl READ resourcesUrl WRITE setResourcesUrl NOTIFY resourcesUrlChanged)
+    Q_PROPERTY(QString extending READ extends WRITE setExtends)
+    Q_PROPERTY(bool allBackends READ allBackends WRITE setAllBackends)
+    Q_PROPERTY(QVariantList subcategories READ subcategories NOTIFY subcategoriesChanged)
+    Q_PROPERTY(bool isBusy READ isBusy NOTIFY busyChanged)
 public:
-    explicit ResourcesProxyModel(QObject *parent=nullptr);
+    explicit ResourcesProxyModel(QObject* parent = nullptr);
+    enum Roles {
+        NameRole = Qt::UserRole,
+        IconRole,
+        CommentRole,
+        StateRole,
+        RatingRole,
+        RatingPointsRole,
+        RatingCountRole,
+        SortableRatingRole,
+        InstalledRole,
+        ApplicationRole,
+        OriginRole,
+        DisplayOriginRole,
+        CanUpgrade,
+        PackageNameRole,
+        IsTechnicalRole,
+        CategoryRole,
+        CategoryDisplayRole,
+        SectionRole,
+        MimeTypes,
+        SizeRole,
+        LongDescriptionRole
+    };
+    Q_ENUM(Roles)
+
+    QHash<int, QByteArray> roleNames() const override;
 
     void setSearch(const QString &text);
     QString lastSearch() const;
     void setOriginFilter(const QString &origin);
     QString originFilter() const;
     void setFiltersFromCategory(Category *category);
-    void setShouldShowTechnical(bool show);
-    bool shouldShowTechnical() const;
-    void setSortByRelevancy(bool sort);
-    bool sortingByRelevancy() const;
-    bool isFilteringBySearch() const;
     void setStateFilter(AbstractResource::State s);
-    void setFilterActive(bool filter);
     AbstractResource::State stateFilter() const;
+    void setSortRole(Roles sortRole);
+    Roles sortRole() const { return m_sortRole; }
+    void setSortOrder(Qt::SortOrder sortOrder);
+    Qt::SortOrder sortOrder() const { return m_sortOrder; }
 
-    bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override;
     Category* filteredCategory() const;
     
     QString mimeTypeFilter() const;
     void setMimeTypeFilter(const QString& mime);
 
-    virtual void setSourceModel(QAbstractItemModel *sourceModel) override;
+    QString extends() const;
+    void setExtends(const QString &extends);
 
-protected:
-    bool lessThan(const QModelIndex &left, const QModelIndex &right) const override;
+    QUrl resourcesUrl() const;
+    void setResourcesUrl(const QUrl& resourcesUrl);
+
+    bool allBackends() const;
+    void setAllBackends(bool allBackends);
+
+    QVariantList subcategories() const;
+
+    QVariant data(const QModelIndex & index, int role) const override;
+    int rowCount(const QModelIndex & parent = {}) const override;
+
+    Q_SCRIPTABLE int indexOf(AbstractResource* res);
+    Q_SCRIPTABLE AbstractResource* resourceAt(int row) const;
+
+    bool isBusy() const { return m_currentStream != nullptr; }
+
+    bool lessThan(AbstractResource* rl, AbstractResource* rr) const;
+    Q_SCRIPTABLE void invalidateFilter();
+    void invalidateSorting();
+
+    void classBegin() override {}
+    void componentComplete() override;
 
 private Q_SLOTS:
-    void refreshSearch();
-
+    void refreshBackend(AbstractResourcesBackend* backend, const QVector<QByteArray>& properties);
+    void refreshResource(AbstractResource* resource, const QVector<QByteArray>& properties);
+    void removeResource(AbstractResource* resource);
 private:
-    QString m_lastSearch;
-    QList<AbstractResource*> m_searchResults;
-    QList<QPair<FilterType, QString> > m_andFilters;
-    QList<QPair<FilterType, QString> > m_orFilters;
-    QList<QPair<FilterType, QString> > m_notFilters;
-    QHash<QByteArray, QVariant> m_roleFilters;
+    void sortedInsertion(const QVector<AbstractResource*> &res);
+    QVariant roleToValue(AbstractResource* res, int role) const;
+
+    QVector<int> propertiesToRoles(const QVector<QByteArray>& properties) const;
+    void addResources(const QVector<AbstractResource*> &res);
+    void fetchSubcategories();
+    void removeDuplicates(QVector<AbstractResource *>& newResources);
+    bool isSorted(const QVector<AbstractResource*> & resources);
+
+    Roles m_sortRole;
+    Qt::SortOrder m_sortOrder;
 
     bool m_sortByRelevancy;
-    bool m_filterBySearch;
-    Category* m_filteredCategory;
-    AbstractResource::State m_stateFilter;
-    QString m_filteredMimeType;
+    bool m_setup = false;
+
+    AbstractResourcesBackend::Filters m_filters;
+    QVariantList m_subcategories;
+
+    QVector<AbstractResource*> m_displayedResources;
+    const QHash<int, QByteArray> m_roles;
+    AggregatedResultsStream* m_currentStream;
 
 Q_SIGNALS:
-    void invalidated();
+    void busyChanged(bool isBusy);
+    void sortRoleChanged(int sortRole);
+    void sortOrderChanged(Qt::SortOrder order);
     void categoryChanged();
     void stateFilterChanged();
-    void showTechnicalChanged();
+    void searchChanged(const QString &search);
+    void subcategoriesChanged(const QVariantList &subcategories);
+    void resourcesUrlChanged(const QUrl &url);
 };
 
 #endif

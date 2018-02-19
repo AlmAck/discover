@@ -21,76 +21,81 @@
 #ifndef KNSBACKEND_H
 #define KNSBACKEND_H
 
-// KDE includes
-#include <KNewStuff3/kns3/entry.h>
+#include <KNSCore/EntryInternal>
 
-// Attica includes
-#include <attica/category.h>
-#include <attica/provider.h>
-
-// DiscoverCommon includes
 #include <resources/AbstractResourcesBackend.h>
 #include "Transaction/AddonList.h"
-
 #include "discovercommon_export.h"
 
 class KConfigGroup;
 class KNSReviews;
-namespace KNS3 { class DownloadManager; }
-namespace Attica {
-    class ProviderManager;
-    class BaseJob;
-}
+class KNSResource;
+class StandardBackendUpdater;
+
+namespace KNSCore { class Engine; }
 
 class DISCOVERCOMMON_EXPORT KNSBackend : public AbstractResourcesBackend
 {
 Q_OBJECT
 public:
-    explicit KNSBackend(QObject* parent = nullptr);
-    virtual ~KNSBackend();
-    
-    virtual void setMetaData(const QString& path) override;
-    virtual void cancelTransaction(AbstractResource* app) override;
-    virtual void removeApplication(AbstractResource* app) override;
-    virtual void installApplication(AbstractResource* app) override;
-    virtual void installApplication(AbstractResource* app, const AddonList& addons) override;
-    virtual AbstractResource* resourceByPackageName(const QString& name) const override;
-    virtual int updatesCount() const override;
-    virtual AbstractReviewsBackend* reviewsBackend() const override;
-    virtual QList<AbstractResource*> searchPackageName(const QString& searchText) override;
-    virtual QVector< AbstractResource* > allResources() const override;
-    virtual AbstractBackendUpdater* backendUpdater() const override;
-    virtual bool isFetching() const override;
-    virtual QList<QAction*> messageActions() const override { return QList<QAction*>(); }
+    explicit KNSBackend(QObject* parent, const QString& iconName, const QString &knsrc);
+    ~KNSBackend() override;
+
+    Transaction* removeApplication(AbstractResource* app) override;
+    Transaction* installApplication(AbstractResource* app) override;
+    Transaction* installApplication(AbstractResource* app, const AddonList& addons) override;
+    int updatesCount() const override;
+    AbstractReviewsBackend* reviewsBackend() const override;
+    AbstractBackendUpdater* backendUpdater() const override;
+    bool isFetching() const override;
+    ResultsStream* search(const AbstractResourcesBackend::Filters & filter) override;
+    ResultsStream* findResourceByPackageName(const QUrl & search) override;
+
+    QVector<Category*> category() const override { return m_rootCategories; }
 
     bool isValid() const override;
-    Attica::Provider* provider() { return &m_provider; }
-    QList<AbstractResource*> upgradeablePackages() const override;
+
+    QStringList extends() const override { return m_extends; }
+
+    QString iconName() const { return m_iconName; }
+
+    KNSCore::Engine* engine() const { return m_engine; }
+
+    void checkForUpdates() override {}
+
+    QString displayName() const override;
+
+Q_SIGNALS:
+    void receivedResources(const QVector<AbstractResource*> &resources);
+    void searchFinished();
+    void startingSearch();
+    void availableForQueries();
 
 public Q_SLOTS:
-    void receivedEntries(const KNS3::Entry::List& entry);
-    void startFetchingCategories();
-    void categoriesLoaded(Attica::BaseJob*);
-    void receivedContents(Attica::BaseJob*);
-    void statusChanged(const KNS3::Entry& entry);
+    void receivedEntries(const KNSCore::EntryInternal::List& entries);
+    void statusChanged(const KNSCore::EntryInternal& entry);
 
 private:
-    static void initManager(const QUrl& group);
-    static QSharedPointer<Attica::ProviderManager> m_atticaManager;
+    void fetchInstalled();
+    KNSResource* resourceForEntry(const KNSCore::EntryInternal& entry);
     void setFetching(bool f);
-    void markInvalid();
+    void markInvalid(const QString &message);
+    ResultsStream* searchStream(const QString &searchText);
     
+    bool m_onePage = false;
+    bool m_responsePending = false;
     bool m_fetching;
     bool m_isValid;
-    KNS3::DownloadManager* m_manager;
+    KNSCore::Engine* m_engine;
     QHash<QString, AbstractResource*> m_resourcesByName;
-    int m_page;
     KNSReviews* const m_reviews;
-    Attica::Provider m_provider;
-    QMap<QString, Attica::Category> m_categories;
     QString m_name;
     QString m_iconName;
-    AbstractBackendUpdater* const m_updater;
+    StandardBackendUpdater* const m_updater;
+    QStringList m_extends;
+    QStringList m_categories;
+    QVector<Category*> m_rootCategories;
+    QString m_displayName;
 };
 
 #endif // KNSBACKEND_H

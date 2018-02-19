@@ -19,23 +19,65 @@
  ***************************************************************************/
 
 #include "AbstractResourcesBackend.h"
+#include "AbstractResource.h"
+#include "Category/Category.h"
 #include <QHash>
+#include <QMetaObject>
+#include <QMetaProperty>
+#include <QDebug>
+#include <QTimer>
+
+QDebug operator<<(QDebug debug, const AbstractResourcesBackend::Filters& filters)
+{
+    QDebugStateSaver saver(debug);
+    debug.nospace() << "Filters(";
+    if (filters.category) debug.nospace() << "category: " << filters.category << ',';
+    if (filters.state) debug.nospace() << "state: " << filters.state << ',';
+    if (!filters.mimetype.isEmpty()) debug.nospace() << "mimetype: " << filters.mimetype << ',';
+    if (!filters.search.isEmpty()) debug.nospace() << "search: " << filters.search << ',';
+    if (!filters.extends.isEmpty()) debug.nospace() << "extends:" << filters.extends << ',';
+    if (!filters.origin.isEmpty()) debug.nospace() << "origin:" << filters.origin << ',';
+    if (!filters.resourceUrl.isEmpty()) debug.nospace() << "resourceUrl:" << filters.resourceUrl << ',';
+    debug.nospace() << ')';
+
+    return debug;
+}
+
+ResultsStream::ResultsStream(const QString &objectName, const QVector<AbstractResource*>& resources)
+    : ResultsStream(objectName)
+{
+    Q_ASSERT(!resources.contains(nullptr));
+    QTimer::singleShot(0, this, [resources, this] () {
+        if (!resources.isEmpty())
+            Q_EMIT resourcesFound(resources);
+        finish();
+    });
+}
+
+ResultsStream::ResultsStream(const QString &objectName)
+{
+    setObjectName(objectName);
+    QTimer::singleShot(5000, this, [objectName]() { qDebug() << "stream took really long" << objectName; });
+}
+
+ResultsStream::~ResultsStream()
+{
+}
+
+void ResultsStream::finish()
+{
+    deleteLater();
+}
 
 AbstractResourcesBackend::AbstractResourcesBackend(QObject* parent)
     : QObject(parent)
 {
 }
 
-void AbstractResourcesBackend::installApplication(AbstractResource* app)
+Transaction* AbstractResourcesBackend::installApplication(AbstractResource* app)
 {
-    installApplication(app, AddonList());
+    return installApplication(app, AddonList());
 }
-
-void AbstractResourcesBackend::integrateActions(KActionCollection*)
-{}
-
-void AbstractResourcesBackend::setMetaData(const QString&)
-{}
 
 void AbstractResourcesBackend::setName(const QString& name)
 {
@@ -45,4 +87,49 @@ void AbstractResourcesBackend::setName(const QString& name)
 QString AbstractResourcesBackend::name() const
 {
     return m_name;
+}
+
+void AbstractResourcesBackend::emitRatingsReady()
+{
+    emit allDataChanged({ "rating", "ratingPoints", "ratingCount", "sortableRating" });
+}
+
+bool AbstractResourcesBackend::Filters::shouldFilter(AbstractResource* res) const
+{
+    Q_ASSERT(res);
+
+    if(!extends.isEmpty() && !res->extends().contains(extends)) {
+        return false;
+    }
+    if(!resourceUrl.isEmpty() && res->url() != resourceUrl) {
+        return false;
+    }
+
+    if(!origin.isEmpty() && res->origin() != origin) {
+        return false;
+    }
+
+    if(res->state() < state)
+        return false;
+
+    if(!mimetype.isEmpty() && !res->mimetypes().contains(mimetype)) {
+        return false;
+    }
+
+    return !category || res->categoryMatches(category);
+}
+
+void AbstractResourcesBackend::Filters::filterJustInCase(QVector<AbstractResource *>& input) const
+{
+    for(auto it = input.begin(); it != input.end();) {
+        if (shouldFilter(*it))
+            ++it;
+        else
+            it = input.erase(it);
+    }
+}
+
+QStringList AbstractResourcesBackend::extends() const
+{
+    return {};
 }

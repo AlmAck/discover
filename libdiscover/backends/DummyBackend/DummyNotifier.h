@@ -28,13 +28,12 @@ Q_OBJECT
 Q_PLUGIN_METADATA(IID "org.kde.discover.BackendNotifierModule")
 Q_INTERFACES(BackendNotifierModule)
 public:
-    DummyNotifier(QObject* parent = nullptr);
-    virtual ~DummyNotifier();
+    explicit DummyNotifier(QObject* parent = nullptr);
+    ~DummyNotifier() override;
 
-    virtual bool isSystemUpToDate() const Q_DECL_OVERRIDE;
-    virtual void recheckSystemUpdateNeeded() Q_DECL_OVERRIDE;
-    virtual uint securityUpdatesCount() Q_DECL_OVERRIDE;
-    virtual uint updatesCount() Q_DECL_OVERRIDE;
+    void recheckSystemUpdateNeeded() override;
+    uint securityUpdatesCount() override;
+    uint updatesCount() override;
 };
 
 #endif

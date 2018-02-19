@@ -25,55 +25,54 @@
 #include "AbstractResourcesBackend.h"
 #include <QSet>
 #include <QDateTime>
+#include <QTimer>
 
 class AbstractResourcesBackend;
 
 class DISCOVERCOMMON_EXPORT StandardBackendUpdater : public AbstractBackendUpdater
 {
     Q_OBJECT
+    Q_PROPERTY(int updatesCount READ updatesCount NOTIFY updatesCountChanged)
     public:
         explicit StandardBackendUpdater(AbstractResourcesBackend* parent = nullptr);
 
-        virtual bool hasUpdates() const override;
-        virtual qreal progress() const override;
-        virtual void start() override;
-        virtual long unsigned int remainingTime() const override;
+        bool hasUpdates() const override;
+        qreal progress() const override;
+        void start() override;
         
-        virtual QList<AbstractResource*> toUpdate() const override;
-        virtual void addResources(const QList<AbstractResource*>& apps) override;
-        virtual void removeResources(const QList<AbstractResource*>& apps) override;
-        virtual void prepare() override;
-        virtual bool isAllMarked() const override;
-        virtual QDateTime lastUpdate() const override;
-        virtual bool isCancelable() const override;
-        virtual bool isProgressing() const override;
-        virtual QString statusDetail() const override;
-        virtual QString statusMessage() const override;
-        virtual quint64 downloadSpeed() const override;
-        virtual QList<QAction*> messageActions() const;
-        virtual bool isMarked(AbstractResource* res) const override;
-        void setStatusDetail(const QString& message);
+        QList<AbstractResource*> toUpdate() const override;
+        void addResources(const QList<AbstractResource*>& apps) override;
+        void removeResources(const QList<AbstractResource*>& apps) override;
+        void prepare() override;
+        QDateTime lastUpdate() const override;
+        bool isCancelable() const override;
+        bool isProgressing() const override;
+        bool isMarked(AbstractResource* res) const override;
+        double updateSize() const override;
         void setProgress(qreal p);
+        int updatesCount() const;
 
-        void setMessageActions(const QList<QAction*>& actions);
+    Q_SIGNALS:
+        void updatesCountChanged(int updatesCount);
 
     public Q_SLOTS:
         void transactionRemoved(Transaction* t);
         void cleanup();
 
     private:
+        void resourcesChanged(AbstractResource* res, const QVector<QByteArray>& props);
+        void refreshUpdateable();
         void transactionAdded(Transaction* newTransaction);
-        void transactionProgressChanged(int progress);
+        void transactionProgressChanged(int percentage);
 
         QSet<AbstractResource*> m_toUpgrade;
-        AbstractResourcesBackend* m_backend;
-        int m_preparedSize;
+        QSet<AbstractResource*> m_upgradeable;
+        AbstractResourcesBackend * const m_backend;
         QSet<AbstractResource*> m_pendingResources;
         bool m_settingUp;
-        QString m_statusDetail;
         qreal m_progress;
         QDateTime m_lastUpdate;
-        QList<QAction*> m_actions;
+        QTimer m_timer;
 };
 
 #endif // STANDARDBACKENDUPDATER_H

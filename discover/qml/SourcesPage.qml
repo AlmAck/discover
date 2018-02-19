@@ -1,132 +1,204 @@
-import QtQuick 2.1
+import QtQuick 2.4
 import QtQuick.Controls 1.1
+import QtQuick.Controls 2.1 as QQC2
 import QtQuick.Layouts 1.1
-import org.kde.discover 1.0
+import org.kde.discover 2.0
+import org.kde.discover.app 1.0
 import org.kde.kquickcontrolsaddons 2.0
+import org.kde.kirigami 2.2 as Kirigami
 import "navigation.js" as Navigation
 
-Item {
+DiscoverPage {
     id: page
     clip: true
-    readonly property real proposedMargin: (width-app.actualWidth)/2
-    readonly property string title: i18n("Sources")
-    readonly property string icon: "view-filter"
+    title: i18n("Settings")
+    property string search: ""
 
-    Menu {
-        id: sourcesMenu
+    Kirigami.Theme.inherit: false
+    Kirigami.Theme.colorSet: Kirigami.Theme.View
+
+    background: Rectangle {
+        color: Kirigami.Theme.backgroundColor
     }
 
-    ScrollView {
-        id: view
-        anchors.fill: parent
-        ListView {
-            width: parent.width
+    contextualActions: [
+        KirigamiActionBridge { action: app.action("help_contents") },
+        KirigamiActionBridge { action: app.action("help_about_app") },
+        KirigamiActionBridge { action: app.action("help_report_bug") }
+    ]
 
-            model: SourcesModel
+    mainItem: ListView {
+        id: sourcesView
+        model: QSortFilterProxyModel {
+            filterRegExp: new RegExp(page.search, 'i')
+            sortRole: SourcesModelClass.SourceNameRole
+            sourceModel: SourcesModel
+        }
+        currentIndex: -1
 
-            header: PageHeader {
-                x: page.proposedMargin
-                width: Math.min(app.actualWidth, view.viewport.width)
-
+        Component {
+            id: sourceBackendDelegate
+            Kirigami.AbstractListItem {
+                id: backendItem
+                hoverEnabled: false
+                supportsMouseEvents: false
+                readonly property QtObject backend: sourcesBackend
+                readonly property bool isDefault: ResourcesModel.currentApplicationBackend == resourcesBackend
                 RowLayout {
-                    anchors.verticalCenter: parent.verticalCenter
-                    ToolButton {
-                        iconName: "list-add"
-                        text: i18n("Add Source")
-
-                        tooltip: text
-                        menu: sourcesMenu
+                    Connections {
+                        target: backendItem.backend
+                        onPassiveMessage: window.showPassiveNotification(message)
                     }
-                    Repeater {
-                        model: SourcesModel.actions
 
-                        delegate: RowLayout{
-                            QIconItem {
-                                icon: modelData.icon
+                    anchors {
+                        right: parent.right
+                        left: parent.left
+                        rightMargin: parent.rightPadding
+                        leftMargin: parent.leftPadding
+                    }
+                    Kirigami.Heading {
+                        Layout.fillWidth: true
+                        text: backendItem.isDefault ? i18n("%1 (Default)", resourcesBackend.displayName) : resourcesBackend.displayName
+                    }
+                    Button {
+                        Layout.rightMargin: Kirigami.Units.smallSpacing
+                        iconName: "preferences-other"
+
+                        visible: resourcesBackend && resourcesBackend.hasApplications
+                        Component {
+                            id: dialogComponent
+                            AddSourceDialog {
+                                source: backendItem.backend
+                                onVisibleChanged: if (!visible) {
+                                    destroy()
+                                }
                             }
-                            ToolButton {
-                                height: parent.height
-                                action: Action {
-                                    readonly property QtObject action: modelData
-                                    text: action.text
-                                    onTriggered: action.trigger()
-                                    enabled: action.enabled
+                        }
+
+                        menu: Menu {
+                            id: settingsMenu
+                            MenuItem {
+                                enabled: !backendItem.isDefault
+                                text: i18n("Make default")
+                                onTriggered: ResourcesModel.currentApplicationBackend = backendItem.backend.resourcesBackend
+                            }
+
+                            MenuItem {
+                                text: i18n("Add Source...")
+                                visible: backendItem.backend
+
+                                onTriggered: {
+                                    var addSourceDialog = dialogComponent.createObject(null, {displayName: backendItem.backend.resourcesBackend.displayName })
+                                    addSourceDialog.open()
+                                }
+                            }
+
+                            MenuSeparator {
+                                visible: backendActionsInst.count>0
+                            }
+
+                            Instantiator {
+                                id: backendActionsInst
+                                model: ActionsModel {
+                                    actions: backendItem.backend ? backendItem.backend.actions : undefined
+                                }
+                                delegate: MenuItem {
+                                    action: ActionBridge { action: modelData.action }
+                                }
+                                onObjectAdded: {
+                                    settingsMenu.insertItem(index, object)
+                                }
+                                onObjectRemoved: {
+                                    object.destroy()
                                 }
                             }
                         }
                     }
                 }
             }
+        }
 
-            delegate: ColumnLayout {
-                id: sourceDelegate
-                x: page.proposedMargin
-                width: Math.min(app.actualWidth, view.viewport.width)
-                spacing: -1
+        delegate: ConditionalLoader {
+            anchors {
+                right: parent.right
+                left: parent.left
+            }
+            readonly property variant resourcesBackend: model.resourcesBackend
+            readonly property variant sourcesBackend: model.sourcesBackend
+            readonly property variant display: model.display
+            readonly property variant checked: model.checked
+            readonly property variant statusTip: model.statusTip
+            readonly property variant toolTip: model.toolTip
+            readonly property variant sourceId: model.sourceId
+            readonly property variant modelIndex: sourcesView.model.index(index, 0)
 
-                property QtObject sourceBackend: model.sourceBackend
-                AddSourceDialog {
-                    id: addSourceDialog
-                    source: sourceDelegate.sourceBackend
-                }
+            condition: resourcesBackend != null
+            componentTrue: sourceBackendDelegate
+            componentFalse: sourceDelegate
+        }
 
-                MenuItem {
-                    id: menuItem
-                    text: model.display
-                    onTriggered: {
-                        try {
-                            addSourceDialog.open()
-                            addSourceDialog.visible = true
-                        } catch (e) {
-                            console.log("error loading dialog:", e)
+        Component {
+            id: sourceDelegate
+            Kirigami.SwipeListItem {
+                Layout.fillWidth: true
+                enabled: display.length>0
+                highlighted: ListView.isCurrentItem
+                onClicked: Navigation.openApplicationListSource(display)
+
+                Keys.onReturnPressed: clicked()
+                actions: [
+                    Kirigami.Action {
+                        iconName: "edit-delete"
+                        tooltip: i18n("Delete the origin")
+                        onTriggered: {
+                            var backend = sourcesBackend
+                            if (!backend.removeSource(sourceId)) {
+                                window.showPassiveNotification(i18n("Failed to remove the source '%1'", display))
+                            }
                         }
                     }
-                }
+                ]
 
-                Component.onCompleted: {
-                    sourcesMenu.insertItem(0, menuItem)
-                }
+                RowLayout {
+                    CheckBox {
+                        id: enabledBox
 
-                Label { text: sourceBackend.name }
-                Repeater {
-                    model: sourceBackend.sources
-
-                    delegate: GridItem {
-                        Layout.fillWidth: true
-                        height: browseOrigin.implicitHeight*1.4
-                        enabled: browseOrigin.enabled
-                        onClicked: Navigation.openApplicationListSource(model.display)
-
-                        RowLayout {
-                            Layout.alignment: Qt.AlignVCenter
-                            anchors.fill: parent
-
-                            CheckBox {
-                                id: enabledBox
-                                enabled: false //TODO: implement the application of this change
-                                checked: model.checked != Qt.Unchecked
-                            }
-                            Label {
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                text: model.display
-                            }
-                            Label {
-                                text: model.toolTip
-                            }
-                            Button {
-                                id: browseOrigin
-                                enabled: display!=""
-                                iconName: "view-filter"
-                                tooltip: i18n("Browse the origin's resources")
-                                onClicked: Navigation.openApplicationListSource(model.display)
-                            }
-                            Button {
-                                iconName: "edit-delete"
-                                onClicked: sourceDelegate.sourceBackend.removeSource(model.display)
-                                tooltip: i18n("Delete the origin")
-                            }
+                        readonly property variant modelChecked: sourcesView.model.data(modelIndex, Qt.CheckStateRole)
+                        checked: modelChecked != Qt.Unchecked
+                        enabled: modelChecked !== undefined
+                        onClicked: {
+                            sourcesView.model.setData(modelIndex, checkedState, Qt.CheckStateRole)
                         }
+                    }
+                    QQC2.Label {
+                        text: display + " - <i>" + toolTip + "</i>"
+                        elide: Text.ElideRight
+                        Layout.fillWidth: true
+                    }
+                }
+            }
+        }
+
+        footer: ColumnLayout {
+            id: foot
+            anchors {
+                right: parent.right
+                left: parent.left
+                margins: Kirigami.Units.smallSpacing
+            }
+            Repeater {
+                id: back
+                model: ResourcesProxyModel {
+                    extending: "org.kde.discover.desktop"
+                }
+                delegate: RowLayout {
+                    visible: !model.application.isInstalled
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: name
+                    }
+                    InstallApplicationButton {
+                        application: application
                     }
                 }
             }

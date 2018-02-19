@@ -22,71 +22,101 @@
 #include <QtGlobal>
 #include <QDebug>
 #include <QAction>
+#include "resources/AbstractResourcesBackend.h"
 #include "resources/AbstractSourcesBackend.h"
 
 Q_GLOBAL_STATIC(SourcesModel, s_sources)
 
-SourcesModel::SourcesModel(QObject* parent)
-    : QAbstractListModel(parent)
-{}
+const auto DisplayName = "DisplayName";
+const auto SourcesBackendId = "SourcesBackend";
 
-SourcesModel::~SourcesModel()
-{}
-
-QHash<int, QByteArray> SourcesModel::roleNames() const
+class SourceBackendModel : public QAbstractListModel
 {
-    QHash<int, QByteArray> roles = QAbstractItemModel::roleNames();
-    roles[SourceBackend] = "sourceBackend";
-    return roles;
-}
+Q_OBJECT
+public:
+    SourceBackendModel(AbstractResourcesBackend* backend)
+        : QAbstractListModel(backend), m_backend(backend)
+    {}
+
+    QVariant data(const QModelIndex & index, int role) const override {
+        if (!index.isValid()) return {};
+        switch(role) {
+            case SourcesModel::ResourcesBackend: return QVariant::fromValue<QObject*>(m_backend);
+        }
+        return {};
+    }
+    int rowCount(const QModelIndex & parent) const override { return parent.isValid() ? 0 : 1; }
+
+private:
+    AbstractResourcesBackend* m_backend;
+};
+
+SourcesModel::SourcesModel(QObject* parent)
+    : KConcatenateRowsProxyModel(parent)
+{}
+
+SourcesModel::~SourcesModel() = default;
 
 SourcesModel* SourcesModel::global()
 {
     return s_sources;
 }
 
+QHash<int, QByteArray> SourcesModel::roleNames() const
+{
+    QHash<int, QByteArray> roles = KConcatenateRowsProxyModel::roleNames();
+    roles.insert(AbstractSourcesBackend::IdRole, "sourceId");
+    roles.insert(SourcesBackend, "sourcesBackend");
+    roles.insert(ResourcesBackend, "resourcesBackend");
+    return roles;
+}
+
 void SourcesModel::addSourcesBackend(AbstractSourcesBackend* sources)
 {
-    if (m_sources.contains(sources))
+    auto backend = qobject_cast<AbstractResourcesBackend*>(sources->parent());
+    auto b = addBackend(backend);
+    if (!b)
         return;
 
-    beginInsertRows(QModelIndex(), m_sources.size(), m_sources.size());
-    m_sources += sources;
-    endInsertRows();
-    emit sourcesChanged();
+    auto m = sources->sources();
+    m->setProperty(DisplayName, backend->displayName());
+    m->setProperty(SourcesBackendId, qVariantFromValue<QObject*>(sources));
+    b->setProperty(SourcesBackendId, qVariantFromValue<QObject*>(sources));
+    addSourceModel(m);
+}
+
+
+SourceBackendModel* SourcesModel::addBackend(AbstractResourcesBackend* backend)
+{
+    Q_ASSERT(backend);
+    const auto inSourcesModel = "InSourcesModel";
+    if (backend->dynamicPropertyNames().contains(inSourcesModel))
+        return nullptr;
+    backend->setProperty(inSourcesModel, 1);
+
+    auto b = new SourceBackendModel(backend);
+    b->setProperty(DisplayName, backend->displayName());
+    addSourceModel(b);
+    return b;
+}
+
+const QAbstractItemModel * SourcesModel::modelAt(const QModelIndex& index) const
+{
+    const auto sidx = mapToSource(index);
+    return sidx.model();
 }
 
 QVariant SourcesModel::data(const QModelIndex& index, int role) const
 {
-    if(!index.isValid() || index.row()>=m_sources.count()) {
-        return QVariant();
+    if (!index.isValid()) return {};
+    switch (role) {
+        case SourceNameRole:
+            return modelAt(index)->property(DisplayName);
+        case SourcesBackend:
+            return modelAt(index)->property(SourcesBackendId);
+        default:
+            return KConcatenateRowsProxyModel::data(index, role);
     }
-    switch(role) {
-        case Qt::DisplayRole:
-            return m_sources[index.row()]->name();
-        case SourceBackend:
-            return QVariant::fromValue<QObject*>(m_sources[index.row()]);
-    }
-
-    return QVariant();
 }
 
-int SourcesModel::rowCount(const QModelIndex& parent) const
-{
-    return parent.isValid() ? 0 : m_sources.count();
-}
-
-QVariant SourcesModel::get(int row, const QByteArray& roleName)
-{
-    return data(index(row), roleNames().key(roleName));
-}
-
-QList<QObject*> SourcesModel::actions() const
-{
-    QList<QObject*> ret;
-    for(AbstractSourcesBackend* b: m_sources) {
-        foreach(QAction* action, b->actions())
-            ret.append(action);
-    }
-    return ret;
-}
+#include "SourcesModel.moc"

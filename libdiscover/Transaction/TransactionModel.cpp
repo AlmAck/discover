@@ -21,8 +21,9 @@
 #include "TransactionModel.h"
 
 // Qt includes
+#include <QtCore/QDebug>
 #include <QtCore/QMetaProperty>
-#include <klocalizedstring.h>
+#include <KLocalizedString>
 
 // Own includes
 #include "resources/AbstractResource.h"
@@ -39,17 +40,19 @@ TransactionModel::TransactionModel(QObject *parent)
 {
     connect(this, &QAbstractItemModel::rowsInserted, this, &TransactionModel::countChanged);
     connect(this, &QAbstractItemModel::rowsRemoved, this, &TransactionModel::countChanged);
+    connect(this, &TransactionModel::countChanged, this, &TransactionModel::progressChanged);
 }
 
 QHash< int, QByteArray > TransactionModel::roleNames() const
 {
-    QHash<int, QByteArray> roles = QAbstractItemModel::roleNames();
+    QHash<int, QByteArray> roles;
     roles[TransactionRoleRole] = "transactionRole";
     roles[TransactionStatusRole] = "status";
     roles[CancellableRole] = "cancellable";
     roles[ProgressRole] = "progress";
     roles[StatusTextRole] = "statusText";
     roles[ResourceRole] = "resource";
+    roles[TransactionRole] = "transaction";
     return roles;
 }
 
@@ -68,7 +71,7 @@ QVariant TransactionModel::data(const QModelIndex &index, int role) const
     if (!index.isValid())
         return QVariant();
 
-    Transaction *trans = transactionFromIndex(index);
+    Transaction *trans = m_transactions[index.row()];
     switch (role) {
     case TransactionRoleRole:
         return trans->role();
@@ -98,24 +101,19 @@ QVariant TransactionModel::data(const QModelIndex &index, int role) const
             break;
         case Transaction::DoneStatus:
             return i18nc("@info:status", "Done");
+        case Transaction::DoneWithErrorStatus:
+            return i18nc("@info:status", "Failed");
+        case Transaction::CancelledStatus:
+            return i18nc("@info:status", "Cancelled");
         }
         break;
+    case TransactionRole:
+        return qVariantFromValue<QObject*>(trans);
     case ResourceRole:
-
         return qVariantFromValue<QObject*>(trans->resource());
     }
 
     return QVariant();
-}
-
-Transaction *TransactionModel::transactionFromIndex(const QModelIndex &index) const
-{
-    Transaction *trans = nullptr;
-
-    if (index.row() < m_transactions.size())
-        trans = m_transactions.at(index.row());
-
-    return trans;
 }
 
 Transaction *TransactionModel::transactionFromResource(AbstractResource *resource) const
@@ -149,75 +147,64 @@ QModelIndex TransactionModel::indexOf(AbstractResource *res) const
 
 void TransactionModel::addTransaction(Transaction *trans)
 {
+    if(!trans)
+        return;
+
     if (m_transactions.contains(trans))
         return;
 
     if (m_transactions.isEmpty())
         emit startingFirstTransaction();
 
-    // Connect all notify signals to our transactionChanged slot
-    const QMetaObject *meta = trans->metaObject();
-    const QMetaMethod notifySlot = metaObject()->method(metaObject()->indexOfSlot("transactionChanged()"));
-    for (int i = 0; i < meta->propertyCount(); ++i) {
-        QMetaProperty prop = meta->property(i);
-
-        if (prop.notifySignalIndex() == -1)
-            continue;
-
-        const QMetaMethod notifySignal = prop.notifySignal();
-        connect(trans, notifySignal, this, notifySlot);
-    }
-
     int before = m_transactions.size();
     beginInsertRows(QModelIndex(), before, before + 1);
     m_transactions.append(trans);
     endInsertRows();
+
+    connect(trans, &Transaction::statusChanged, this, [this](){ transactionChanged(StatusTextRole); });
+    connect(trans, &Transaction::cancellableChanged, this, [this](){ transactionChanged(CancellableRole); });
+    connect(trans, &Transaction::progressChanged, this, [this](){ transactionChanged(ProgressRole); Q_EMIT progressChanged(); });
+
     emit transactionAdded(trans);
-}
-
-void TransactionModel::cancelTransaction(Transaction *trans)
-{
-    removeTransaction(trans);
-
-    emit transactionCancelled(trans);
 }
 
 void TransactionModel::removeTransaction(Transaction *trans)
 {
-    int r = indexOf(trans).row();
+    Q_ASSERT(trans);
+    trans->deleteLater();
+    int r = m_transactions.indexOf(trans);
+    if (r<0) {
+        qWarning() << "transaction not part of the model" << trans;
+        return;
+    }
+
+    disconnect(trans, nullptr, this, nullptr);
+
     beginRemoveRows(QModelIndex(), r, r);
     m_transactions.removeAt(r);
     endRemoveRows();
+
     emit transactionRemoved(trans);
     if (m_transactions.isEmpty())
-        emit lastTransactionFinished(); 
-}
-
-bool TransactionModel::removeRows(int row, int count, const QModelIndex &parent)
-{
-    if(parent.isValid())
-        return false;
-
-    for(; row<=count; ++row) {
-        QModelIndex child = index(row);
-        Transaction *trans = transactionFromIndex(child);
-        if(!trans)
-            continue;
-
-        beginRemoveRows(parent, row, row);
-        int c = m_transactions.removeAll(trans);
-        Q_ASSERT(c==1);
-        endRemoveRows();
-        emit transactionRemoved(trans);
-    }
-    if (m_transactions.isEmpty())
         emit lastTransactionFinished();
-    return true;
 }
 
-void TransactionModel::transactionChanged()
+void TransactionModel::transactionChanged(int role)
 {
     Transaction *trans = qobject_cast<Transaction *>(sender());
     QModelIndex transIdx = indexOf(trans);
-    emit dataChanged(transIdx, transIdx);
+    emit dataChanged(transIdx, transIdx, {role});
+}
+
+int TransactionModel::progress() const
+{
+    int sum = 0;
+    int count = 0;
+    foreach(Transaction* t, m_transactions) {
+        if (t->isActive() && t->isVisible()) {
+            sum += t->progress();
+            ++count;
+        }
+    }
+    return count==0 ? 0 : sum / count;
 }

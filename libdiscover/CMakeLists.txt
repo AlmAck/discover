@@ -1,8 +1,8 @@
 add_definitions(-DTRANSLATION_DOMAIN=\"libdiscover\")
 
 add_subdirectory(backends)
-add_subdirectory(declarative)
 add_subdirectory(notifiers)
+add_subdirectory(tests)
 
 set(discovercommon_SRCS
     Category/Category.cpp
@@ -11,7 +11,6 @@ set(discovercommon_SRCS
     ReviewsBackend/AbstractReviewsBackend.cpp
     ReviewsBackend/Rating.cpp
     ReviewsBackend/Review.cpp
-    ReviewsBackend/AbstractLoginBackend.cpp
     ReviewsBackend/ReviewsModel.cpp
     Transaction/AddonList.cpp
     Transaction/Transaction.cpp
@@ -29,23 +28,35 @@ set(discovercommon_SRCS
     resources/AbstractResource.cpp
     resources/AbstractBackendUpdater.cpp
     resources/AbstractSourcesBackend.cpp
-    MessageActionsModel
+    resources/StoredResultsStream.cpp
+    CachedNetworkAccessManager.cpp
+    ActionsModel.cpp
     DiscoverBackendsFactory.cpp
     ScreenshotsModel.cpp
     ApplicationAddonsModel.cpp
 )
 
-kconfig_add_kcfg_files(discovercommon_SRCS GENERATE_MOC MuonDataSources.kcfgc)
+if(AppStreamQt_FOUND)
+    set(discovercommon_SRCS ${discovercommon_SRCS}
+        appstream/OdrsReviewsBackend.cpp
+        appstream/AppStreamIntegration.cpp
+    )
+endif()
+
 add_library(DiscoverCommon ${discovercommon_SRCS})
 
 target_link_libraries(DiscoverCommon
 LINK_PUBLIC
     Qt5::Core
+    Qt5::Qml
     Qt5::Widgets
     KF5::I18n
+    KF5::ItemModels
 LINK_PRIVATE
     Qt5::Xml
-    KF5::XmlGui
+    Qt5::DBus
+    KF5::KIOCore
+    KF5::CoreAddons
 )
 add_library(Discover::Common ALIAS DiscoverCommon)
 

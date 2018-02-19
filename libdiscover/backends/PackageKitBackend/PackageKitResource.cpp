@@ -22,15 +22,16 @@
 #include "PackageKitResource.h"
 #include "PackageKitBackend.h"
 #include "PackageKitMessages.h"
-#include <MuonDataSources.h>
 #include <KLocalizedString>
 #include <PackageKit/Details>
 #include <PackageKit/Daemon>
+#include <QDebug>
 
 PackageKitResource::PackageKitResource(QString packageName, QString summary, PackageKitBackend* parent)
     : AbstractResource(parent)
     , m_summary(std::move(summary))
     , m_name(std::move(packageName))
+    , m_dependenciesCount(0)
 {
     setObjectName(m_name);
 }
@@ -47,7 +48,7 @@ QString PackageKitResource::packageName() const
 
 QStringList PackageKitResource::allPackageNames() const
 {
-    return QStringList(m_name);
+    return { m_name };
 }
 
 QString PackageKitResource::availablePackageId() const
@@ -59,13 +60,14 @@ QString PackageKitResource::availablePackageId() const
 
     QMap<PackageKit::Transaction::Info, QStringList>::const_iterator it = m_packages.constFind(PackageKit::Transaction::InfoAvailable);
     if (it != m_packages.constEnd())
-        return it->first();
+        return it->last();
     return installedPackageId();
 }
 
 QString PackageKitResource::installedPackageId() const
 {
-    return m_packages[PackageKit::Transaction::InfoInstalled].first();
+    const auto installed = m_packages[PackageKit::Transaction::InfoInstalled];
+    return installed.isEmpty() ? QString() : installed.last();
 }
 
 QString PackageKitResource::comment()
@@ -85,7 +87,7 @@ QUrl PackageKitResource::homepage()
     return QUrl(m_details.url());
 }
 
-QString PackageKitResource::icon() const
+QVariant PackageKitResource::icon() const
 {
     return QStringLiteral("applications-other");
 }
@@ -93,7 +95,7 @@ QString PackageKitResource::icon() const
 QString PackageKitResource::license()
 {
     fetchDetails();
-    return m_details.license();
+    return m_details.license().isEmpty() ? i18n("Unknown") : m_details.license();
 }
 
 QList<PackageState> PackageKitResource::addonsInformation()
@@ -119,23 +121,13 @@ int PackageKitResource::size()
 
 QString PackageKitResource::origin() const
 {
-    //TODO
-    return QStringLiteral("PackageKit");
+    auto pkgid = availablePackageId();
+    return PackageKit::Daemon::packageData(pkgid);
 }
 
 QString PackageKitResource::section()
 {
     return QString();
-}
-
-QUrl PackageKitResource::screenshotUrl()
-{
-    return QUrl(MuonDataSources::screenshotsSource().toString() + QStringLiteral("/screenshot/") + packageName());
-}
-
-QUrl PackageKitResource::thumbnailUrl()
-{
-    return QUrl(MuonDataSources::screenshotsSource().toString() + QStringLiteral("/thumbnail/") + packageName());
 }
 
 AbstractResource::State PackageKitResource::state()
@@ -150,149 +142,46 @@ AbstractResource::State PackageKitResource::state()
         return Broken;
 }
 
-void PackageKitResource::setPackages(const QMap<PackageKit::Transaction::Info, QStringList> &packages)
+void PackageKitResource::addPackageId(PackageKit::Transaction::Info info, const QString &packageId, bool arch)
 {
-    m_packages = packages;
-    emit stateChanged();
-}
-
-void PackageKitResource::addPackageId(PackageKit::Transaction::Info info, const QString &packageId, const QString &/*summary*/)
-{
-    m_packages[info].append(packageId);
+    if (arch)
+        m_packages[info].append(packageId);
+    else
+        m_packages[info].prepend(packageId);
     emit stateChanged();
 }
 
 QStringList PackageKitResource::categories()
 {
-    /*fetchDetails();
-    QStringList categories;
-    switch (m_group) {
-        case PackageKit::Transaction::GroupUnknown:
-            categories << "Unknown";
-            break;
-        case PackageKit::Transaction::GroupAccessibility:
-            categories << "Accessibility";
-            break;
-        case PackageKit::Transaction::GroupAccessories:
-            categories << "Utility";
-            break;
-        case PackageKit::Transaction::GroupAdminTools:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupCommunication:
-            categories << "Chat";
-            break;
-        case PackageKit::Transaction::GroupDesktopGnome:
-            categories << "Unknown";
-            break;
-        case PackageKit::Transaction::GroupDesktopKde:
-            categories << "Unknown";
-            break;
-        case PackageKit::Transaction::GroupDesktopOther:
-            categories << "Unknown";
-            break;
-        case PackageKit::Transaction::GroupDesktopXfce:
-            categories << "Unknown";
-            break;
-        case PackageKit::Transaction::GroupEducation:
-            categories << "Science";
-            break;
-        case PackageKit::Transaction::GroupFonts:
-            categories << "Fonts";
-            break;
-        case PackageKit::Transaction::GroupGames:
-            categories << "Games";
-            break;
-        case PackageKit::Transaction::GroupGraphics:
-            categories << "Graphics";
-            break;
-        case PackageKit::Transaction::GroupInternet:
-            categories << "Internet";
-            break;
-        case PackageKit::Transaction::GroupLegacy:
-            categories << "Unknown";
-            break;
-        case PackageKit::Transaction::GroupLocalization:
-            categories << "Localization";
-            break;
-        case PackageKit::Transaction::GroupMaps:
-            categories << "Geography";
-            break;
-        case PackageKit::Transaction::GroupMultimedia:
-            categories << "Multimedia";
-            break;
-        case PackageKit::Transaction::GroupNetwork:
-            categories << "Network";
-            break;
-        case PackageKit::Transaction::GroupOffice:
-            categories << "Office";
-            break;
-        case PackageKit::Transaction::GroupOther:
-            categories << "Unknown";
-            break;
-        case PackageKit::Transaction::GroupPowerManagement:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupProgramming:
-            categories << "Development";
-            break;
-        case PackageKit::Transaction::GroupPublishing:
-            categories << "Publishing";
-            break;
-        case PackageKit::Transaction::GroupRepos:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupSecurity:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupServers:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupSystem:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupVirtualization:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupScience:
-            categories << "Science";
-            break;
-        case PackageKit::Transaction::GroupDocumentation:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupElectronics:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupCollections:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupVendor:
-            categories << "System";
-            break;
-        case PackageKit::Transaction::GroupNewest:
-            categories << "System";
-            break;
-    };
-    return categories;*/
-    return QStringList(QStringLiteral("Unknown"));
-    //NOTE: I commented the category fetching code, as it seems to get called even for non-technical items
-    //when selecting a category, and receiving details for all packages takes about 20 mins in my VirtualBox and probably not much less on real systems
+    return { QStringLiteral("Unknown") };
 }
 
 bool PackageKitResource::isTechnical() const
 {
-    return true;//!m_availablePackageId.startsWith("flash");
+    return true;
 }
 
 void PackageKitResource::fetchDetails()
 {
-    if (!m_details.isEmpty())
+    const QString pkgid = availablePackageId();
+    if (!m_details.isEmpty() || pkgid.isEmpty())
         return;
     m_details.insert(QStringLiteral("fetching"), true);//we add an entry so it's not re-fetched.
 
-    PackageKit::Transaction* t = PackageKit::Daemon::getDetails(availablePackageId());
-    connect(t, &PackageKit::Transaction::details, this, &PackageKitResource::setDetails);
-    connect(t, &PackageKit::Transaction::errorCode, this, [](PackageKit::Transaction::Error, const QString& msg){ qWarning() << "error fetching details" << msg; });
+    backend()->fetchDetails(pkgid);
+}
+
+void PackageKitResource::failedFetchingDetails(PackageKit::Transaction::Error, const QString& msg)
+{
+    qWarning() << "error fetching details" << msg;
+}
+
+void PackageKitResource::setDependenciesCount(uint deps)
+{
+    if (deps != m_dependenciesCount) {
+        m_dependenciesCount = deps;
+        Q_EMIT sizeChanged();
+    }
 }
 
 void PackageKitResource::setDetails(const PackageKit::Details & details)
@@ -301,10 +190,13 @@ void PackageKitResource::setDetails(const PackageKit::Details & details)
     if (!ourDetails)
         return;
 
-    m_details = details;
-    emit stateChanged();
+    if (m_details != details) {
+        m_details = details;
+        emit stateChanged();
 
-    backend()->allDataChanged();
+        if (!backend()->isFetching())
+            backend()->resourcesChanged(this, {"size", "homepage", "license"});
+    }
 }
 
 void PackageKitResource::fetchChangelog()
@@ -317,16 +209,17 @@ void PackageKitResource::fetchChangelog()
 static void addIfNotEmpty(const QString& title, const QString& content, QString& where)
 {
     if (!content.isEmpty())
-        where += QStringLiteral("<p><b>") + title + QStringLiteral("</b>&nbsp;") + content + QStringLiteral("</p>");
+        where += QStringLiteral("<p><b>") + title + QStringLiteral("</b>&nbsp;") + QString(content).replace(QStringLiteral("\n"), QStringLiteral("<br />")) + QStringLiteral("</p>");
 }
 
-static QString joinPackages(const QStringList& pkgids)
+QString PackageKitResource::joinPackages(const QStringList& pkgids, const QString &_sep)
 {
     QStringList ret;
     foreach(const QString& pkgid, pkgids) {
         ret += i18nc("package-name (version)", "%1 (%2)", PackageKit::Daemon::packageName(pkgid), PackageKit::Daemon::packageVersion(pkgid));
     }
-    return ret.join(i18nc("comma separating package names", ", "));
+    const QString sep = _sep.isEmpty() ? i18nc("comma separating package names", ", ") : _sep;
+    return ret.join(sep);
 }
 
 static QStringList urlToLinks(const QStringList& urls)
@@ -345,7 +238,6 @@ void PackageKitResource::updateDetail(const QString& /*packageID*/, const QStrin
     addIfNotEmpty(i18n("Reason:"), updateText, info);
     addIfNotEmpty(i18n("Obsoletes:"), joinPackages(obsoletes), info);
     addIfNotEmpty(i18n("Updates:"), joinPackages(updates), info);
-    addIfNotEmpty(i18n("Change Log:"), changelog, info);
     addIfNotEmpty(i18n("Update State:"), PackageKitMessages::updateStateMessage(state), info);
     addIfNotEmpty(i18n("Restart:"), PackageKitMessages::restartMessage(restart), info);
 
@@ -360,3 +252,10 @@ PackageKitBackend* PackageKitResource::backend() const
     return qobject_cast<PackageKitBackend*>(parent());
 }
 
+QString PackageKitResource::sizeDescription()
+{
+    if (m_dependenciesCount == 0)
+        return AbstractResource::sizeDescription();
+    else
+        return i18np("%2 (plus %1 dependency)", "%2 (plus %1 dependencies)", m_dependenciesCount, AbstractResource::sizeDescription());
+}

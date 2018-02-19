@@ -24,11 +24,12 @@
 #include <QIcon>
 #include "MuonExporter.h"
 #include <DiscoverBackendsFactory.h>
-#include "DiscoverVersion.h"
+#include "../DiscoverVersion.h"
 
 int main(int argc, char** argv)
 {
-    QApplication app(argc, argv);
+    QGuiApplication app(argc, argv);
+    app.setQuitOnLastWindowClosed(false);
     KLocalizedString::setApplicationDomain("plasma-discover-exporter");
     KAboutData about(QStringLiteral("muonexporter"), i18n("Muon Exporter"), version, QString(),
                      KAboutLicense::GPL, i18n("©2013 Aleix Pol Gonzalez"), QString());

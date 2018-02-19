@@ -22,7 +22,7 @@
 #ifndef TRANSACTIONLISTENER_H
 #define TRANSACTIONLISTENER_H
 
-#include <QtCore/QObject>
+#include <QObject>
 
 #include "Transaction.h"
 #include "discovercommon_export.h"
@@ -33,40 +33,44 @@ class DISCOVERCOMMON_EXPORT TransactionListener : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(AbstractResource* resource READ resource WRITE setResource NOTIFY resourceChanged)
+    Q_PROPERTY(Transaction* transaction READ transaction WRITE setTransaction NOTIFY transactionChanged)
     Q_PROPERTY(bool isCancellable READ isCancellable NOTIFY cancellableChanged)
-    Q_PROPERTY(bool isActive READ isActive NOTIFY runningChanged)
+    Q_PROPERTY(bool isActive READ isActive NOTIFY isActiveChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
     Q_PROPERTY(int progress READ progress NOTIFY progressChanged)
 public:
     explicit TransactionListener(QObject *parent = nullptr);
     
-    AbstractResource *resource() const;
+    AbstractResource *resource() const { return m_resource; }
+    Transaction *transaction() const { return m_transaction; }
     bool isCancellable() const;
     bool isActive() const;
     QString statusText() const;
     int progress() const;
 
-    void setResource(AbstractResource* resource);
+    Q_SCRIPTABLE void cancel();
 
-private:
+    void setResource(AbstractResource* resource);
     void setTransaction(Transaction *trans);
 
+private:
+    void setResourceInternal(AbstractResource* resource);
+
     AbstractResource *m_resource;
-    Transaction *m_transaction;
+    Transaction* m_transaction;
 
 private Q_SLOTS:
     void transactionAdded(Transaction *trans);
-    void transactionRemoved(Transaction* trans);
-    void transactionCancelled(Transaction* trans);
     void transactionStatusChanged(Transaction::Status status);
 
 Q_SIGNALS:
     void resourceChanged();
     void cancellableChanged();
-    void runningChanged();
+    void isActiveChanged();
     void statusTextChanged();
     void cancelled();
     void progressChanged();
+    void transactionChanged(Transaction* transaction);
 };
 
 #endif // TRANSACTIONLISTENER_H

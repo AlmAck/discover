@@ -24,7 +24,6 @@
 #include <QObject>
 #include "discovercommon_export.h"
 
-class QAction;
 class QDateTime;
 class QIcon;
 class AbstractResource;
@@ -57,9 +56,6 @@ class DISCOVERCOMMON_EXPORT AbstractBackendUpdater : public QObject
     Q_PROPERTY(qreal progress READ progress NOTIFY progressChanged)
     Q_PROPERTY(bool isCancelable READ isCancelable NOTIFY cancelableChanged)
     Q_PROPERTY(bool isProgressing READ isProgressing NOTIFY progressingChanged)
-    Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
-    Q_PROPERTY(QString statusDetail READ statusDetail NOTIFY statusDetailChanged)
-    Q_PROPERTY(quint64 downloadSpeed READ downloadSpeed NOTIFY downloadSpeedChanged)
     public:
         /**
          * Constructs an AbstractBackendUpdater
@@ -81,11 +77,6 @@ class DISCOVERCOMMON_EXPORT AbstractBackendUpdater : public QObject
          */
         virtual qreal progress() const = 0;
         
-        /** 
-         * @returns the proposed ETA in milliseconds 
-         */
-        virtual long unsigned int remainingTime() const = 0;
-        
         /**
          * This method is used to remove resources from the list of packages
          * marked to be upgraded. It will potentially be called before \start.
@@ -106,10 +97,7 @@ class DISCOVERCOMMON_EXPORT AbstractBackendUpdater : public QObject
          * @returns the QDateTime when the last update happened
          */
         virtual QDateTime lastUpdate() const = 0;
-        /**
-         * @returns true when upgradeable packages are marked be upgraded
-         */
-        virtual bool isAllMarked() const = 0;
+
         /**
          * @returns whether the updater can currently be canceled or not
          * @see cancelableChanged
@@ -122,24 +110,18 @@ class DISCOVERCOMMON_EXPORT AbstractBackendUpdater : public QObject
          * @see progressingChanged
          */
         virtual bool isProgressing() const = 0;
-        
-        /**
-         * @returns the string about the current status of the update
-         */
-        virtual QString statusMessage() const = 0;
-        /**
-         * @returns a more detailled description of what is currently happening with the update
-         */
-        virtual QString statusDetail() const = 0;
-        /**
-         * @returns the overall download speed during the downloading phase of the update
-         */
-        virtual quint64 downloadSpeed() const = 0;
 
         /**
          * @returns whether @p res is marked for update
          */
         virtual bool isMarked(AbstractResource* res) const = 0;
+
+        virtual void fetchChangelog() const;
+
+        /**
+         * @returns the size of all the packages set to update combined
+         */
+        virtual double updateSize() const = 0;
 
     public Q_SLOTS:
         /**
@@ -162,17 +144,17 @@ class DISCOVERCOMMON_EXPORT AbstractBackendUpdater : public QObject
          */
         virtual void start() = 0;
 
+        /**
+         * Answers a proceed request
+         */
+        virtual void proceed() {}
+
     Q_SIGNALS:
         /**
          * The AbstractBackendUpdater should emit this signal when the progress changed.
          * @see progress
          */
         void progressChanged(qreal progress);
-        /**
-         * The AbstractBackendUpdater should emit this signal when the remaining time changed.
-         * @see remainingTime
-         */
-        void remainingTimeChanged();//FIXME: API inconsistency here!!
         /**
          * The AbstractBackendUpdater should emit this signal when the cancelable property changed.
          * @see isCancelable
@@ -203,6 +185,17 @@ class DISCOVERCOMMON_EXPORT AbstractBackendUpdater : public QObject
          * Provides the @p progress of a specific @p resource in a percentage.
          */
         void resourceProgressed(AbstractResource* resource, qreal progress);
+
+        void passiveMessage(const QString &message);
+
+        /**
+         * Provides a message to be shown to the user
+         *
+         * The user gets to acknowledge and proceed or cancel the transaction.
+         *
+         * @sa proceed(), cancel()
+         */
+        void proceedRequest(const QString &title, const QString &description);
 };
 
 #endif // ABSTRACTBACKENDUPDATER_H

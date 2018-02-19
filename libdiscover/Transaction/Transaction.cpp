@@ -20,24 +20,28 @@
 
 #include "Transaction.h"
 
+#include <resources/AbstractResource.h>
 #include "TransactionModel.h"
+#include <QDebug>
 
 Transaction::Transaction(QObject *parent, AbstractResource *resource,
-                         Role role)
+                         Role role, const AddonList& addons)
     : QObject(parent)
     , m_resource(resource)
     , m_role(role)
     , m_status(CommittingStatus)
+    , m_addons(addons)
     , m_isCancellable(true)
     , m_progress(0)
 {
 }
 
-Transaction::Transaction(QObject *parent, AbstractResource *resource,
-                         Role role, const AddonList& addons)
-    : Transaction(parent, resource, role)
+Transaction::~Transaction()
 {
-    m_addons = addons;
+    if(status()<DoneStatus || TransactionModel::global()->contains(this)) {
+        qWarning() << "destroying Transaction before it's over" << this;
+        TransactionModel::global()->removeTransaction(this);
+    }
 }
 
 AbstractResource *Transaction::resource() const
@@ -76,8 +80,10 @@ void Transaction::setStatus(Status status)
         m_status = status;
         emit statusChanged(m_status);
 
-        if (m_status == DoneStatus) {
+        if (m_status == DoneStatus || m_status == CancelledStatus || m_status == DoneWithErrorStatus) {
             setCancellable(false);
+
+            TransactionModel::global()->removeTransaction(this);
         }
     }
 }
@@ -99,10 +105,30 @@ void Transaction::setProgress(int progress)
     }
 }
 
-void Transaction::cancel()
+bool Transaction::isActive() const
 {
-    if (!m_isCancellable)
-        return;
+    return m_status == DownloadingStatus || m_status == CommittingStatus;
+}
 
-    TransactionModel::global()->cancelTransaction(this);
+QString Transaction::name() const
+{
+    return m_resource->name();
+}
+
+QVariant Transaction::icon() const
+{
+    return m_resource->icon();
+}
+
+bool Transaction::isVisible() const
+{
+    return m_visible;
+}
+
+void Transaction::setVisible(bool visible)
+{
+    if (m_visible != visible) {
+        m_visible = visible;
+        Q_EMIT visibleChanged(visible);
+    }
 }

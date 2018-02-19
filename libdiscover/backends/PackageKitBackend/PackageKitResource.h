@@ -32,40 +32,47 @@ class PackageKitResource : public AbstractResource
     Q_OBJECT
     public:
         explicit PackageKitResource(QString  packageName, QString  summary, PackageKitBackend* parent);
-        virtual QString packageName() const override;
-        virtual QString name() override;
-        virtual QString comment() override;
-        virtual QString longDescription() override;
-        virtual QUrl homepage() override;
-        virtual QString icon() const override;
-        virtual QStringList categories() override;
-        virtual QString license() override;
-        virtual QString origin() const override;
-        virtual QString section() override;
-        virtual bool isTechnical() const override;
-        virtual int size() override;
-        virtual void fetchChangelog() override;
+        QString packageName() const override;
+        QString name() override;
+        QString comment() override;
+        QString longDescription() override;
+        QUrl homepage() override;
+        QVariant icon() const override;
+        QStringList categories() override;
+        QString license() override;
+        QString origin() const override;
+        QString section() override;
+        bool isTechnical() const override;
+        int size() override;
+        void fetchChangelog() override;
         
-        virtual QList<PackageState> addonsInformation() override;
-        virtual State state() override;
+        QList<PackageState> addonsInformation() override;
+        State state() override;
         
-        virtual QUrl screenshotUrl() override;
-        virtual QUrl thumbnailUrl() override;
-        
-        virtual QString installedVersion() const override;
-        virtual QString availableVersion() const override;
+        QString installedVersion() const override;
+        QString availableVersion() const override;
         virtual QStringList allPackageNames() const;
         QString installedPackageId() const;
         QString availablePackageId() const;
 
+        void clearPackageIds() { m_packages.clear(); }
+
         QMap<PackageKit::Transaction::Info, QStringList> packages() const { return m_packages; }
-        void setPackages(const QMap<PackageKit::Transaction::Info, QStringList> &packages);
+
+        PackageKitBackend* backend() const;
+
+        static QString joinPackages(const QStringList& pkgids, const QString &_sep = {});
+
+        void invokeApplication() const override {}
+        bool canExecute() const override { return false; }
+
+        QString sizeDescription() override;
+        void setDependenciesCount(uint count);
 
     public Q_SLOTS:
-        void addPackageId(PackageKit::Transaction::Info info, const QString &packageId, const QString &summary);
+        void addPackageId(PackageKit::Transaction::Info info, const QString &packageId, bool arch);
         void setDetails(const PackageKit::Details& details);
 
-    private Q_SLOTS:
         void updateDetail(const QString &packageID,
                           const QStringList &updates,
                           const QStringList &obsoletes,
@@ -79,15 +86,18 @@ class PackageKitResource : public AbstractResource
                           const QDateTime &issued,
                           const QDateTime &updated);
 
+    private Q_SLOTS:
+        void failedFetchingDetails(PackageKit::Transaction::Error, const QString& msg);
+
     private:
         /** fetches details individually, it's better if done in batch, like for updates */
         void fetchDetails();
-        PackageKitBackend* backend() const;
 
         QMap<PackageKit::Transaction::Info, QStringList> m_packages;
         const QString m_summary;
         const QString m_name;
         PackageKit::Details m_details;
+        uint m_dependenciesCount;
 };
 
 #endif // PACKAGEKITRESOURCE_H

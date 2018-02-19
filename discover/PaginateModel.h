@@ -43,13 +43,21 @@ class PaginateModel : public QAbstractListModel
     Q_PROPERTY(bool staticRowCount READ hasStaticRowCount WRITE setStaticRowCount)
 
     public:
-        PaginateModel(QObject* object = nullptr);
+        explicit PaginateModel(QObject* object = nullptr);
+        ~PaginateModel() override;
 
         int pageSize() const;
         void setPageSize(int count);
 
         int firstItem() const;
         void setFirstItem(int row);
+
+        /**
+         * @returns Last visible item.
+         *
+         * Convenience function
+         */
+        int lastItem() const;
 
         QAbstractItemModel* sourceModel() const;
         void setSourceModel(QAbstractItemModel* model);
@@ -86,7 +94,7 @@ class PaginateModel : public QAbstractListModel
         void _k_sourceColumnsAboutToBeMoved(const QModelIndex &sourceParent, int sourceStart, int sourceEnd, const QModelIndex &destParent, int dest);
         void _k_sourceColumnsMoved(const QModelIndex &sourceParent, int sourceStart, int sourceEnd, const QModelIndex &destParent, int dest);
 
-        void _k_sourceDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight);
+        void _k_sourceDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight, const QVector<int> &roles);
         void _k_sourceHeaderDataChanged(Qt::Orientation orientation, int first, int last);
 
         void _k_sourceModelAboutToBeReset();
@@ -99,6 +107,7 @@ class PaginateModel : public QAbstractListModel
         void pageCountChanged();
 
     private:
+        bool canSizeChange() const;
         bool isIntervalValid(const QModelIndex& parent, int start, int end) const;
 
         int rowsByPageSize(int size) const;

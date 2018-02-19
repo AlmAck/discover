@@ -20,25 +20,61 @@
 
 import QtQuick 2.1
 import QtQuick.Controls 1.1
-import org.kde.discover 1.0
+import org.kde.discover 2.0
+import org.kde.discover.app 1.0
+import org.kde.kirigami 2.0 as Kirigami
 
-ScrollView {
+Kirigami.OverlaySheet {
     id: page
     property alias model: reviewsView.model
-    readonly property real proposedMargin: app.isCompact ? 0 : (width-app.actualWidth)/2
-    property var icon
-    property string title
+    readonly property QtObject reviewsBackend: resource.backend.reviewsBackend
+    readonly property var resource: model.resource
+
+    readonly property var rd: ReviewDialog {
+        id: reviewDialog
+        application: page.resource
+        parent: overlay
+        backend: page.reviewsBackend
+        onAccepted: backend.submitReview(resource, summary, review, rating)
+    }
+
+    function openReviewDialog() {
+        reviewDialog.sheetOpen = true
+        page.sheetOpen = false
+    }
 
     ListView {
         id: reviewsView
 
         clip: true
-        visible: count>0
-        spacing: 5
+        spacing: Kirigami.Units.smallSpacing
+        cacheBuffer: Math.max(0, contentHeight)
+
+        header: Item {
+            width: parent.width
+            height: reviewButton.height + 2 * Kirigami.Units.largeSpacing
+            Button {
+                id: reviewButton
+
+                anchors {
+                    verticalCenter: parent.verticalCenter
+                    left: parent.left
+                    leftMargin: Kirigami.Units.largeSpacing
+                }
+
+                visible: page.reviewsBackend != null
+                enabled: page.resource.isInstalled
+                text: i18n("Review...")
+                onClicked: page.openReviewDialog()
+            }
+        }
 
         delegate: ReviewDelegate {
-            x: page.proposedMargin
-            width: app.isCompact ? page.viewport.width : app.actualWidth
+            anchors {
+                left: parent.left
+                right: parent.right
+            }
+            separator: index != ListView.view.count-1
             onMarkUseful: page.model.markUseful(index, useful)
         }
     }

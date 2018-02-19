@@ -28,31 +28,32 @@ class AppPackageKitResource : public PackageKitResource
 {
     Q_OBJECT
     public:
-        explicit AppPackageKitResource(const Appstream::Component& data, PackageKitBackend* parent);
+        explicit AppPackageKitResource(const AppStream::Component& data, const QString &packageName, PackageKitBackend* parent);
 
-        QString appstreamId() const;
+        QString appstreamId() const override;
 
-        virtual bool isTechnical() const override;
-        virtual QString name() override;
-        virtual QString icon() const override;
-        virtual QStringList mimetypes() const override;
-        virtual QStringList categories() override;
-        virtual QString longDescription() override;
-        virtual QUrl homepage() override;
-        virtual bool canExecute() const override;
-        virtual QStringList executables() const override;
-        virtual void invokeApplication() const override;
-        virtual QString comment() override;
-        virtual QString license() override;
-        virtual QUrl screenshotUrl() override;
-        virtual QUrl thumbnailUrl() override;
-        virtual QStringList allPackageNames() const override;
-        virtual QList<PackageState> addonsInformation() override;
+        bool isTechnical() const override;
+        QString name() override;
+        QVariant icon() const override;
+        QStringList mimetypes() const override;
+        QStringList categories() override;
+        QString longDescription() override;
+        QUrl homepage() override;
+        QUrl helpURL() override;
+        QUrl bugURL() override;
+        QUrl donationURL() override;
+        QString comment() override;
+        QString license() override;
+        QStringList allPackageNames() const override;
+        QList<PackageState> addonsInformation() override;
+        QStringList extends() const override;
+        void fetchScreenshots() override;
+        void fetchChangelog() override;
+        void invokeApplication() const override;
+        bool canExecute() const override { return true; }
 
     private:
-        QStringList findProvides(Appstream::Provides::Kind kind) const;
-
-        const Appstream::Component m_appdata;
+        const AppStream::Component m_appdata;
 };
 
 #endif // APPPACKAGEKITRESOURCE_H

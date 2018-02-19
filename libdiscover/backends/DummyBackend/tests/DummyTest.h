@@ -33,15 +33,17 @@ public:
     explicit DummyTest(QObject* parent = nullptr);
 
 private Q_SLOTS:
-    void init();
+    void initTestCase();
 
     void testReadData();
     void testProxy();
+    void testProxySorting();
     void testFetch();
     void testSort();
     void testInstallAddons();
     void testReviewsModel();
     void testUpdateModel();
+    void testScreenshotsModel();
 
 private:
     AbstractResourcesBackend* m_appBackend;

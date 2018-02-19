@@ -28,40 +28,32 @@ class PackageKitUpdater : public AbstractBackendUpdater
 {
     Q_OBJECT
     public:
-        PackageKitUpdater(PackageKitBackend * parent = nullptr);
-        ~PackageKitUpdater();
+        explicit PackageKitUpdater(PackageKitBackend * parent = nullptr);
+        ~PackageKitUpdater() override;
         
-        virtual void prepare() override;
+        void prepare() override;
         
-        virtual bool hasUpdates() const override;
-        virtual qreal progress() const override;
-        
-        /** proposed ETA in milliseconds */
-        virtual long unsigned int remainingTime() const override;
-        
-        virtual void removeResources(const QList<AbstractResource*>& apps) override;
-        virtual void addResources(const QList<AbstractResource*>& apps) override;
-        virtual QList<AbstractResource*> toUpdate() const override;
-        virtual bool isMarked(AbstractResource* res) const override;
-        virtual QDateTime lastUpdate() const override;
-        virtual bool isAllMarked() const override;
-        virtual bool isCancelable() const override;
-        virtual bool isProgressing() const override;
-        
-        virtual QString statusMessage() const override;
-        virtual QString statusDetail() const override;
-        virtual quint64 downloadSpeed() const override;
+        bool hasUpdates() const override;
+        qreal progress() const override;
 
-        /** in plasma-discover-updater, actions with HighPriority will be shown in a KMessageWidget,
-         *  normal priority will go right on top of the more menu, low priority will go
-         *  to the advanced menu
-         */
-        virtual QList<QAction*> messageActions() const;
+        void setProgressing(bool progressing);
+        
+        void removeResources(const QList<AbstractResource*>& apps) override;
+        void addResources(const QList<AbstractResource*>& apps) override;
+        QList<AbstractResource*> toUpdate() const override;
+        bool isMarked(AbstractResource* res) const override;
+        QDateTime lastUpdate() const override;
+        bool isCancelable() const override;
+        bool isProgressing() const override;
+        void fetchChangelog() const override;
+        double updateSize() const override;
+
+        void proceed() override;
 
     public Q_SLOTS:
         ///must be implemented if ever isCancelable is true
-        virtual void cancel() override;
-        virtual void start() override;
+        void cancel() override;
+        void start() override;
     
     private Q_SLOTS:
         void errorFound(PackageKit::Transaction::Error err, const QString& error);
@@ -69,35 +61,40 @@ class PackageKitUpdater : public AbstractBackendUpdater
         void requireRestart(PackageKit::Transaction::Restart restart, const QString& p);
         void eulaRequired(const QString &eulaID, const QString &packageID, const QString &vendor, const QString &licenseAgreement);
         void finished(PackageKit::Transaction::Exit exit, uint);
-        void statusChanged();
-        void speedChanged();
         void cancellableChanged();
-        void remainingTimeChanged();
         void percentageChanged();
-        
+        void updateDetail(const QString& packageID, const QStringList& updates, const QStringList& obsoletes, const QStringList& vendorUrls,
+                                      const QStringList& bugzillaUrls, const QStringList& cveUrls, PackageKit::Transaction::Restart restart, const QString& updateText,
+                                      const QString& changelog, PackageKit::Transaction::UpdateState state, const QDateTime& issued, const QDateTime& updated);
+        void packageResolved(PackageKit::Transaction::Info info, const QString& packageId);
+        void repoSignatureRequired(const QString &packageID,
+                                    const QString &repoName,
+                                    const QString &keyUrl,
+                                    const QString &keyUserid,
+                                    const QString &keyId,
+                                    const QString &keyFingerprint,
+                                    const QString &keyTimestamp,
+                                    PackageKit::Transaction::SigType type);
+
     private:
+        void processProceedFunction();
         void itemProgress(const QString &itemID, PackageKit::Transaction::Status status, uint percentage);
         void fetchLastUpdateTime();
         void lastUpdateTimeReceived(QDBusPendingCallWatcher* w);
-        void setProgressing(bool progressing);
-        void setTransaction(PackageKit::Transaction* transaction);
+        void setupTransaction(PackageKit::Transaction::TransactionFlags flags);
         QSet<QString> involvedPackages(const QSet<AbstractResource*>& packages) const;
         QSet<AbstractResource*> packagesForPackageId(const QSet<QString>& packages) const;
 
         QPointer<PackageKit::Transaction> m_transaction;
-        PackageKitBackend * m_backend;
+        PackageKitBackend * const m_backend;
         QSet<AbstractResource*> m_toUpgrade;
         QSet<AbstractResource*> m_allUpgradeable;
         bool m_isCancelable;
         bool m_isProgressing;
-        PackageKit::Transaction::Status m_status;
-        QString m_statusMessage;
-        QString m_statusDetail;
-        quint64 m_speed;
-        long unsigned int m_remainingTime;
-        uint m_percentage;
-        QAction* m_updateAction;
+        int m_percentage;
         QDateTime m_lastUpdate;
+        QStringList m_packagesRemoved;
+        QVector<std::function<PackageKit::Transaction*()>> m_proceedFunctions;
 };
 
 

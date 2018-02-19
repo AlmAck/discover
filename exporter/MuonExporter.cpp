@@ -20,71 +20,68 @@
 #include "MuonExporter.h"
 #include <resources/AbstractResourcesBackend.h>
 #include <resources/ResourcesModel.h>
+#include <resources/StoredResultsStream.h>
 #include <resources/AbstractResource.h>
 #include <QFile>
 #include <QDebug>
 #include <QTimer>
 #include <QMetaProperty>
 #include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 
 MuonExporter::MuonExporter()
     : QObject(nullptr)
+    , m_exculdedProperties({ "executables" , "canExecute" })
 {
-    m_startExportingTimer = new QTimer(this);
-    m_startExportingTimer->setInterval(200);
-    m_startExportingTimer->setSingleShot(true);
-    connect(m_startExportingTimer, &QTimer::timeout, this, &MuonExporter::exportModel);
-    
-    m_exculdedProperties += "executables";
-    m_exculdedProperties += "canExecute";
-    connect(ResourcesModel::global(), &ResourcesModel::allInitialized, this, &MuonExporter::allBackendsInitialized);
+    connect(ResourcesModel::global(), &ResourcesModel::backendsChanged, this, &MuonExporter::fetchResources);
 }
 
-MuonExporter::~MuonExporter()
-{}
-
-void MuonExporter::allBackendsInitialized()
-{
-    m_startExportingTimer->start();
-    connect(ResourcesModel::global(), SIGNAL(rowsInserted(QModelIndex,int,int)), m_startExportingTimer, SLOT(start()));
-}
+MuonExporter::~MuonExporter() = default;
 
 void MuonExporter::setExportPath(const QUrl& url)
 {
     m_path = url;
 }
 
-QVariantMap itemDataToMap(const AbstractResource* res, const QSet<QByteArray>& excluded)
+QJsonObject itemDataToMap(const AbstractResource* res, const QSet<QByteArray>& excluded)
 {
-    QVariantMap ret;
+    QJsonObject ret;
     int propsCount = res->metaObject()->propertyCount();
     for(int i = 0; i<propsCount; i++) {
         QMetaProperty prop = res->metaObject()->property(i);
         if(prop.type() == QVariant::UserType || excluded.contains(prop.name()))
             continue;
-        QVariant val = res->property(prop.name());
-        
+
+        const QVariant val = prop.read(res);
         if(val.isNull())
             continue;
         
-        ret.insert(QString::fromLatin1(prop.name()), val);
+        ret.insert(QLatin1String(prop.name()), QJsonValue::fromVariant(val));
     }
     return ret;
 }
 
-void MuonExporter::exportModel()
+void MuonExporter::fetchResources()
 {
-    QVariantList data;
     ResourcesModel* m = ResourcesModel::global();
-    
-    for(int i = 0; i<m->rowCount(); i++) {
-        QModelIndex idx = m->index(i, 0);
-        AbstractResource* res = qobject_cast<AbstractResource*>(m->data(idx, ResourcesModel::ApplicationRole).value<QObject*>());
-        Q_ASSERT(res);
+    QSet<ResultsStream*> streams;
+    foreach(auto backend, m->backends()) {
+        streams << backend->search({});
+    }
+    auto stream = new StoredResultsStream(streams);
+    connect(stream, &StoredResultsStream::finishedResources, this, &MuonExporter::exportResources);
+    QTimer::singleShot(15000, stream, &AggregatedResultsStream::finished);
+}
+
+void MuonExporter::exportResources(const QVector<AbstractResource*>& resources)
+{
+    QJsonArray data;
+    foreach(auto res, resources) {
         data += itemDataToMap(res, m_exculdedProperties);
     }
 
-    QJsonDocument doc = QJsonDocument::fromVariant(data);
+    QJsonDocument doc = QJsonDocument(data);
     if(doc.isNull()) {
         qWarning() << "Could not completely export the data to " << m_path;
         return;

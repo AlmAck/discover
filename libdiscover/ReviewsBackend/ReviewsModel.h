@@ -22,18 +22,20 @@
 #define REVIEWSMODEL_H
 
 #include <QModelIndex>
+#include <QSharedPointer>
 #include "discovercommon_export.h"
 
 class Review;
+typedef QSharedPointer<Review> ReviewPtr;
+
 class AbstractResource;
 class AbstractReviewsBackend;
 class DISCOVERCOMMON_EXPORT ReviewsModel : public QAbstractListModel
 {
     Q_OBJECT
-    Q_PROPERTY(AbstractReviewsBackend* backend READ backend)
-    Q_PROPERTY(AbstractResource* resource READ resource WRITE setResource)
+    Q_PROPERTY(AbstractReviewsBackend* backend READ backend NOTIFY resourceChanged)
+    Q_PROPERTY(AbstractResource* resource READ resource WRITE setResource NOTIFY resourceChanged)
     Q_PROPERTY(int count READ rowCount NOTIFY rowsChanged)
-    Q_ENUMS(UserChoice)
     public:
         enum Roles {
             ShouldShow=Qt::UserRole+1,
@@ -50,17 +52,19 @@ class DISCOVERCOMMON_EXPORT ReviewsModel : public QAbstractListModel
             Yes,
             No
         };
+        Q_ENUM(UserChoice)
+
         explicit ReviewsModel(QObject* parent = nullptr);
-        ~ReviewsModel();
-        virtual QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
-        virtual int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+        ~ReviewsModel() override;
+        QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
+        int rowCount(const QModelIndex& parent = QModelIndex()) const override;
 
         AbstractReviewsBackend* backend() const;
         void setResource(AbstractResource* app);
         AbstractResource* resource() const;
-        virtual void fetchMore(const QModelIndex& parent=QModelIndex()) override;
-        virtual bool canFetchMore(const QModelIndex&) const override;
-        virtual QHash<int, QByteArray> roleNames() const override;
+        void fetchMore(const QModelIndex& parent=QModelIndex()) override;
+        bool canFetchMore(const QModelIndex& /*parent*/) const override;
+        QHash<int, QByteArray> roleNames() const override;
 
     public Q_SLOTS:
         void deleteReview(int row);
@@ -68,16 +72,17 @@ class DISCOVERCOMMON_EXPORT ReviewsModel : public QAbstractListModel
         void markUseful(int row, bool useful);
 
     private Q_SLOTS:
-        void addReviews(AbstractResource* app, const QList<Review*>& reviews);
+        void addReviews(AbstractResource* app, const QVector<ReviewPtr>& reviews, bool canFetchMore);
         void restartFetching();
 
     Q_SIGNALS:
         void rowsChanged();
+        void resourceChanged();
 
     private:
         AbstractResource* m_app;
         AbstractReviewsBackend* m_backend;
-        QList<Review*> m_reviews;
+        QVector<ReviewPtr> m_reviews;
         int m_lastPage;
         bool m_canFetchMore;
 };

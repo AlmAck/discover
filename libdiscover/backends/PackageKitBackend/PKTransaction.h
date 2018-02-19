@@ -24,6 +24,7 @@
 #include <Transaction/Transaction.h>
 #include <PackageKit/Transaction>
 #include <QPointer>
+#include <QSet>
 
 class PKTransaction : public Transaction
 {
@@ -32,12 +33,15 @@ class PKTransaction : public Transaction
         explicit PKTransaction(const QVector<AbstractResource*>& app, Transaction::Role role);
         PackageKit::Transaction* transaction();
 
-        void cancel();
+        void cancel() override;
+        void proceed() override;
 
     public Q_SLOTS:
         void start();
 
-    private Q_SLOTS:
+    private:
+        void processProceedFunction();
+
         void cleanup(PackageKit::Transaction::Exit, uint);
         void errorFound(PackageKit::Transaction::Error err, const QString& error);
         void mediaChange(PackageKit::Transaction::MediaType media, const QString& type, const QString& text);
@@ -45,10 +49,24 @@ class PKTransaction : public Transaction
         void progressChanged(const QString&, PackageKit::Transaction::Status, uint);
         void eulaRequired(const QString &eulaID, const QString &packageID, const QString &vendor, const QString &licenseAgreement);
         void cancellableChanged();
+        void packageResolved(PackageKit::Transaction::Info info, const QString& packageId);
+        void submitResolve();
+        void repoSignatureRequired(const QString &packageID,
+                                    const QString &repoName,
+                                    const QString &keyUrl,
+                                    const QString &keyUserid,
+                                    const QString &keyId,
+                                    const QString &keyFingerprint,
+                                    const QString &keyTimestamp,
+                                    PackageKit::Transaction::SigType type);
 
-    private:
+        void trigger(PackageKit::Transaction::TransactionFlags flags);
         QPointer<PackageKit::Transaction> m_trans;
         const QVector<AbstractResource*> m_apps;
+        QSet<QString> m_pkgnames;
+        QVector<std::function<PackageKit::Transaction*()>> m_proceedFunctions;
+
+        QMap<PackageKit::Transaction::Info, QStringList> m_newPackageStates;
 };
 
 #endif // PKTRANSACTION_H
