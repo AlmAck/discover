@@ -26,6 +26,7 @@ find_package(packagekitqt5 CONFIG)
 find_package(AppStreamQt 0.11.1 CONFIG)
 find_package(KF5Attica 5.23 CONFIG)
 find_package(KF5NewStuff 5.23 CONFIG)
+find_package(AkabeiClient CONFIG)
 
 pkg_check_modules(FLATPAK  flatpak>=0.6.12)
 
@@ -74,6 +75,11 @@ set_package_properties(FLATPAK PROPERTIES
     DESCRIPTION "Library that exposes flatpak repositories"
     URL "http://www.freedesktop.org"
     PURPOSE "Required to build the Flatpak backend"
+    TYPE OPTIONAL)
+set_package_properties(AkabeiClient PROPERTIES
+    DESCRIPTION "Library that exposes Akabei resources"
+    URL "https://www.chakralinux.org"
+    PURPOSE "Required to build the Akabei backend"
     TYPE OPTIONAL)
 
 feature_summary(WHAT ALL FATAL_ON_MISSING_REQUIRED_PACKAGES)
