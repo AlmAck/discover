@@ -1,4 +1,5 @@
 /***************************************************************************
+ *   Copyright © 2017 Aleix Pol Gonzalez <aleixpol@blue-systems.com>       *
  *   Copyright © 2017 Jan Grulich <jgrulich@redhat.com>                    *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or         *
@@ -18,52 +19,26 @@
  *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
-#ifndef FLATPAKTRANSACTIONJOB_H
-#define FLATPAKTRANSACTIONJOB_H
+#ifndef CACHEDNETWORKACCESSMANAGER_H
+#define CACHEDNETWORKACCESSMANAGER_H
 
-extern "C" {
-#include <flatpak.h>
-#include <gio/gio.h>
-#include <glib.h>
-}
+#include <QNetworkAccessManager>
+#include <QQmlNetworkAccessManagerFactory>
+#include <KIO/AccessManager>
 
-#include <Transaction/Transaction.h>
-#include <QThread>
-
-class FlatpakResource;
-class FlatpakTransactionJob : public QThread
+class CachedNetworkAccessManager : public KIO::AccessManager
 {
-Q_OBJECT
+    Q_OBJECT
 public:
-    FlatpakTransactionJob(FlatpakResource *app, const QPair<QString, uint> &relatedRef, Transaction::Role role, QObject *parent = nullptr);
-    ~FlatpakTransactionJob();
+    explicit CachedNetworkAccessManager(const QString &path, QObject *parent = nullptr);
 
-    void cancel();
-    void run() override;
-
-    FlatpakResource * app() const;
-
-    bool isRelated() const;
-
-    int progress() const;
-    void setProgress(int progress);
-
-    QString errorMessage() const;
-    bool result() const;
-
-Q_SIGNALS:
-    void progressChanged(int progress);
-
-private:
-    bool m_result;
-    int m_progress;
-    QString m_errorMessage;
-    QString m_relatedRef;
-    uint m_relatedRefKind;
-    GCancellable *m_cancellable;
-    FlatpakResource *m_app;
-    Transaction::Role m_role;
+    virtual QNetworkReply * createRequest(Operation op, const QNetworkRequest &request, QIODevice *outgoingData = nullptr) override;
 };
 
-#endif // FLATPAKTRANSACTIONJOB_H
+class CachedNetworkAccessManagerFactory : public QQmlNetworkAccessManagerFactory
+{
+    virtual QNetworkAccessManager * create(QObject *parent) override;
+};
+
+#endif // CACHEDNETWORKACCESSMANAGER_H
 

@@ -27,6 +27,7 @@
 #include <QAction>
 #include <QProcess>
 #include <QDebug>
+#include <QRegularExpression>
 #include <resources/AbstractResourcesBackend.h>
 #include "PackageKitBackend.h"
 #include "config-paths.h"
@@ -37,13 +38,6 @@ public:
     PKSourcesModel(PackageKitSourcesBackend* backend)
         : QStandardItemModel(backend)
         , m_backend(backend) {}
-
-    QHash<int, QByteArray> roleNames() const override
-    {
-        auto roles = QStandardItemModel::roleNames();
-        roles[Qt::CheckStateRole] = "checked";
-        return roles;
-    }
 
     bool setData(const QModelIndex & index, const QVariant & value, int role) override {
         auto item = itemFromIndex(index);
@@ -71,6 +65,7 @@ static QAction* createActionForService(const QString &servicePath, QObject* pare
     KDesktopFile parser(servicePath);
     action->setIcon(QIcon::fromTheme(parser.readIcon()));
     action->setText(parser.readName());
+    action->setToolTip(parser.readComment());
     QObject::connect(action, &QAction::triggered, action, [servicePath](){
         bool b = QProcess::startDetached(QStringLiteral(CMAKE_INSTALL_FULL_LIBEXECDIR_KF5 "/discover/runservice"), {servicePath});
         if (!b)
@@ -87,14 +82,20 @@ PackageKitSourcesBackend::PackageKitSourcesBackend(AbstractResourcesBackend* par
     resetSources();
 
     // Kubuntu-based
-    auto service = PackageKitBackend::locateService(QStringLiteral("software-properties-kde.desktop"));
-    if (!service.isEmpty())
-        m_actions += createActionForService(service, this);
+    auto addNativeSourcesManager = [this](const QString &file){
+        auto service = PackageKitBackend::locateService(file);
+        if (!service.isEmpty())
+            m_actions += createActionForService(service, this);
+        };
 
-    // openSUSE-based
-    service = PackageKitBackend::locateService(QStringLiteral("YaST2/sw_source.desktop"));
-    if (!service.isEmpty())
-        m_actions += createActionForService(service, this);
+    //New Ubuntu
+    addNativeSourcesManager(QStringLiteral("software-properties-qt.desktop"));
+
+    //Old Ubuntu
+    addNativeSourcesManager(QStringLiteral("software-properties-kde.desktop"));
+
+    //OpenSuse
+    addNativeSourcesManager(QStringLiteral("YaST2/sw_source.desktop"));
 }
 
 QString PackageKitSourcesBackend::idDescription()
@@ -119,6 +120,15 @@ void PackageKitSourcesBackend::addRepositoryDetails(const QString &id, const QSt
 
     if (!item) {
         item = new QStandardItem(description);
+        if (PackageKit::Daemon::backendName() == QLatin1String("aptcc")) {
+            QRegularExpression exp(QStringLiteral("^/etc/apt/sources.list.d/(.+?).list:.*"));
+
+            auto matchIt = exp.globalMatch(id);
+            if (matchIt.hasNext()) {
+                auto match = matchIt.next();
+                item->setData(match.captured(1), Qt::ToolTipRole);
+            }
+        }
         add = true;
     }
     item->setData(id, IdRole);

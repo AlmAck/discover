@@ -27,13 +27,13 @@
 
 Q_GLOBAL_STATIC_WITH_ARGS(QVector<QString>, s_icons, ({ QLatin1String("kdevelop"), QLatin1String("kalgebra"), QLatin1String("kmail"), QLatin1String("akregator"), QLatin1String("korganizer") }))
 
-DummyResource::DummyResource(QString name, bool isTechnical, AbstractResourcesBackend* parent)
+DummyResource::DummyResource(QString name, AbstractResource::Type type, AbstractResourcesBackend* parent)
     : AbstractResource(parent)
     , m_name(std::move(name))
     , m_state(State::Broken)
     , m_iconName((*s_icons)[KRandom::random() % s_icons->size()])
     , m_addons({ PackageState(QStringLiteral("a"), QStringLiteral("aaaaaa"), false), PackageState(QStringLiteral("b"), QStringLiteral("aaaaaa"), false), PackageState(QStringLiteral("c"), QStringLiteral("aaaaaa"), false)})
-    , m_isTechnical(isTechnical)
+    , m_type(type)
 {
     const int nofScreenshots = KRandom::random() % 5;
     m_screenshots = QList<QUrl>{
@@ -93,7 +93,8 @@ QUrl DummyResource::donationURL()
 
 QVariant DummyResource::icon() const
 {
-    return isTechnical() ? QStringLiteral("kalarm") : m_iconName;
+    static const QVector<QVariant> icons = { QStringLiteral("device-notifier"), QStringLiteral("media-floppy"), QStringLiteral("drink-beer") };
+    return icons[type()];
 }
 
 QString DummyResource::installedVersion() const
@@ -119,7 +120,7 @@ QString DummyResource::longDescription()
     "Integer in sapien eget quam vulputate lobortis. Morbi nibh elit, elementum vitae vehicula sed, consequat nec erat. Donec placerat porttitor est ut dapibus. Fusce augue orci, dictum et convallis vel, blandit eu tortor. Phasellus non eros nulla. In iaculis nulla fermentum nulla gravida eu mattis purus consectetur. Integer dui nunc, sollicitudin ac tincidunt nec, hendrerit bibendum nunc. Proin sit amet augue ac velit egestas varius. Sed eu ante quis orci vestibulum sagittis. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Phasellus vitae urna odio, at molestie leo. In convallis neque vel mi dictum convallis lobortis turpis sagittis.\n\n");
 }
 
-QString DummyResource::name()
+QString DummyResource::name() const
 {
     return m_name;
 }

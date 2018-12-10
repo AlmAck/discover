@@ -36,18 +36,20 @@ Q_PROPERTY(QString iconName READ iconName NOTIFY updatesChanged)
 Q_PROPERTY(QString message READ message NOTIFY updatesChanged)
 Q_PROPERTY(QString extendedMessage READ extendedMessage NOTIFY updatesChanged)
 Q_PROPERTY(State state READ state NOTIFY updatesChanged)
+Q_PROPERTY(bool needsReboot READ needsReboot NOTIFY needsRebootChanged)
 public:
     enum State {
         NoUpdates,
         NormalUpdates,
-        SecurityUpdates
+        SecurityUpdates,
+        RebootRequired
     };
     Q_ENUM(State)
 
     explicit DiscoverNotifier(QObject* parent = nullptr);
     ~DiscoverNotifier() override;
 
-    bool isSystemUpToDate() const { return state() == NoUpdates; }
+    bool isSystemUpToDate() const;
 
     State state() const;
     QString iconName() const;
@@ -59,25 +61,32 @@ public:
     uint securityUpdatesCount() const;
 
     QStringList loadedModules() const;
+    bool needsReboot() const { return m_needsReboot; }
 
 public Q_SLOTS:
     void configurationChanged();
     void recheckSystemUpdateNeeded();
-    void showMuon();
+    void showDiscover();
+    void showDiscoverUpdates();
+    void showUpdatesNotification();
+    void reboot();
+    void foundUpgradeAction(UpgradeAction* action);
 
 Q_SIGNALS:
     void updatesChanged();
+    bool needsRebootChanged(bool needsReboot);
+    void newUpgradeAction(UpgradeAction* action);
 
 private:
-    void showUpdatesNotification();
+    void showRebootNotification();
     void updateStatusNotifier();
-    void loadBackends();
 
     QList<BackendNotifierModule*> m_backends;
     bool m_verbose;
     QTimer m_timer;
     uint m_securityCount = 0;
     uint m_count = 0;
+    bool m_needsReboot = false;
 };
 
 #endif //ABSTRACTKDEDMODULE_H

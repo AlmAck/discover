@@ -19,7 +19,7 @@
 
 #include "PaginateModel.h"
 #include <QtMath>
-#include <QDebug>
+#include "discover_debug.h"
 
 PaginateModel::PaginateModel(QObject* object)
     : QAbstractListModel(object)
@@ -205,8 +205,8 @@ void PaginateModel::setStaticRowCount(bool src)
         return;
     }
 
-    m_hasStaticRowCount = src;
     beginResetModel();
+    m_hasStaticRowCount = src;
     endResetModel();
 }
 
@@ -318,8 +318,8 @@ void PaginateModel::_k_sourceRowsAboutToBeInserted(const QModelIndex& parent, in
     }
 
     if(canSizeChange()) {
-        const int insertedCount = end-start;
         const int newStart = qMax(start-m_firstItem, 0);
+        const int insertedCount = qMin(end-start, pageSize() - newStart -1);
         beginInsertRows(QModelIndex(), newStart, newStart+insertedCount);
     } else {
         beginResetModel();

@@ -22,6 +22,7 @@
 #define KNSBACKEND_H
 
 #include <KNSCore/EntryInternal>
+#include <KNSCore/ErrorCode>
 
 #include <resources/AbstractResourcesBackend.h>
 #include "Transaction/AddonList.h"
@@ -49,7 +50,7 @@ public:
     AbstractBackendUpdater* backendUpdater() const override;
     bool isFetching() const override;
     ResultsStream* search(const AbstractResourcesBackend::Filters & filter) override;
-    ResultsStream* findResourceByPackageName(const QUrl & search) override;
+    ResultsStream* findResourceByPackageName(const QUrl & search);
 
     QVector<Category*> category() const override { return m_rootCategories; }
 
@@ -70,18 +71,21 @@ Q_SIGNALS:
     void searchFinished();
     void startingSearch();
     void availableForQueries();
+    void initialized();
 
 public Q_SLOTS:
     void receivedEntries(const KNSCore::EntryInternal::List& entries);
     void statusChanged(const KNSCore::EntryInternal& entry);
+    void signalErrorCode(const KNSCore::ErrorCode& errorCode, const QString& message, const QVariant& metadata);
 
 private:
     void fetchInstalled();
     KNSResource* resourceForEntry(const KNSCore::EntryInternal& entry);
     void setFetching(bool f);
     void markInvalid(const QString &message);
-    ResultsStream* searchStream(const QString &searchText);
-    
+    void searchStream(ResultsStream* stream, const QString &searchText);
+    void fetchMore();
+
     bool m_onePage = false;
     bool m_responsePending = false;
     bool m_fetching;

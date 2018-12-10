@@ -1,10 +1,11 @@
 add_subdirectory(icons)
-add_subdirectory(autotests)
+if(BUILD_TESTING)
+    add_subdirectory(autotests)
+endif()    
 
 include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/..)
 
-qt5_add_resources(plasma_discover_SRCS resources.qrc)
-qt5_add_resources(plasma_discover_SRCS assets.qrc)
+ecm_qt_declare_logging_category(plasma_discover_SRCS HEADER discover_debug.h IDENTIFIER DISCOVER_LOG CATEGORY_NAME org.kde.plasma.discover)
 
 add_executable(plasma-discover ${plasma_discover_SRCS}
     main.cpp
@@ -14,18 +15,23 @@ add_executable(plasma-discover ${plasma_discover_SRCS}
     FeaturedModel.cpp
     PaginateModel.cpp
     UnityLauncher.cpp
+    ReadFile.cpp
+    CachedNetworkAccessManager.cpp
+
+    resources.qrc
+    assets.qrc
 )
 add_executable(Plasma::Discover ALIAS plasma-discover)
 set_target_properties(plasma-discover PROPERTIES INSTALL_RPATH ${CMAKE_INSTALL_FULL_LIBDIR}/plasma-discover)
 
-target_link_libraries(plasma-discover LINK_PUBLIC
+target_link_libraries(plasma-discover PUBLIC
                                      KF5::Crash
                                      KF5::DBusAddons
                                      KF5::I18n
                                      KF5::XmlGui
-                                     KF5::Declarative
                                      KF5::ItemModels
-                                     KF5::KIOCore
+                                     KF5::KIOWidgets
+                                     KF5::QuickAddons
                                      Qt5::Quick
                                      Discover::Common
 )
@@ -38,17 +44,32 @@ install(TARGETS plasma-discover ${INSTALL_TARGETS_DEFAULT_ARGS} )
 
 # Standard desktop file accepts local files as input.
 set(DesktopNoDisplay "false")
-set(DesktopMimeType "application/vnd.debian.binary-package;application/x-rpm;")
+find_program(DPKG dpkg)
+find_program(RPM rpm)
+set(DesktopMimeType "")
+if(DPKG)
+     set(DesktopMimeType "${DesktopMimeType}application/vnd.debian.binary-package;")
+endif()
+if(RPM)
+     set(DesktopMimeType "${DesktopMimeType}application/x-rpm;")
+endif()
 set(DesktopExec "plasma-discover %F")
 configure_file(org.kde.discover.desktop.cmake ${CMAKE_CURRENT_BINARY_DIR}/org.kde.discover.desktop)
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/org.kde.discover.desktop DESTINATION ${XDG_APPS_INSTALL_DIR} )
 
-# URL handler accepts URLs as input but is only used to handle appstream://
+# Support appstream:// URI
 set(DesktopNoDisplay "true")
 set(DesktopMimeType "x-scheme-handler/appstream;")
 set(DesktopExec "plasma-discover %U")
 configure_file(org.kde.discover.desktop.cmake ${CMAKE_CURRENT_BINARY_DIR}/org.kde.discover.urlhandler.desktop)
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/org.kde.discover.urlhandler.desktop DESTINATION ${XDG_APPS_INSTALL_DIR} )
+
+# support snap:/ URI
+set(DesktopNoDisplay "true")
+set(DesktopMimeType "x-scheme-handler/snap;")
+set(DesktopExec "plasma-discover %U")
+configure_file(org.kde.discover.desktop.cmake ${CMAKE_CURRENT_BINARY_DIR}/org.kde.discover.snap.urlhandler.desktop)
+install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/org.kde.discover.snap.urlhandler.desktop DESTINATION ${XDG_APPS_INSTALL_DIR} )
 
 if(EXISTS "/etc/debian_version")
     set(DesktopNoDisplay "true")

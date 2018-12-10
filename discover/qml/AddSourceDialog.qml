@@ -18,14 +18,21 @@
  */
 
 import QtQuick 2.1
-import QtQuick.Controls 1.1
-import QtQuick.Dialogs 1.2
+import QtQuick.Controls 2.1
 import QtQuick.Layouts 1.1
+import org.kde.kirigami 2.2 as Kirigami
 
-Dialog {
+Popup
+{
     id: newSourceDialog
-    title: i18n("Specify the new source for %1", displayName)
-    standardButtons: StandardButton.Ok | StandardButton.Close
+    parent: applicationWindow().overlay
+    modal: true
+    focus: true
+    width: Kirigami.Units.gridUnit * 20
+
+    x: (parent.width - width)/2
+    y: (parent.height - height)/2
+
     property string displayName
     property QtObject source
 
@@ -36,6 +43,11 @@ Dialog {
             right: parent.right
         }
 
+        Kirigami.Heading {
+            level: 3
+            Layout.fillWidth: true
+            text: i18n("Add a new %1 repository", displayName)
+        }
         Label {
             id: description
             Layout.fillWidth: true
@@ -48,9 +60,33 @@ Dialog {
         TextField {
             id: repository
             Layout.fillWidth: true
-            Keys.onEnterPressed: newSourceDialog.accept()
+            onAccepted: okButton.clicked()
             focus: true
+            onTextChanged: color = Kirigami.Theme.textColor
+        }
+
+        DialogButtonBox {
+            Layout.fillWidth: true
+
+            Button {
+                id: okButton
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                text: i18n("Add")
+                icon.name: "list-add"
+                onClicked: if (source.addSource(repository.text)) {
+                    newSourceDialog.close()
+                } else {
+                    repository.color = Kirigami.Theme.negativeTextColor
+                }
+            }
+
+            Button {
+                id: cancelButton
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+                text: i18n("Cancel")
+                icon.name: "dialog-cancel"
+                onClicked: newSourceDialog.close()
+            }
         }
     }
-    onAccepted: source.addSource(repository.text)
 }

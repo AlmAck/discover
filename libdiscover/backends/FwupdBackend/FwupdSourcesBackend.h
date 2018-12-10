@@ -1,5 +1,6 @@
 /***************************************************************************
- *   Copyright © 2013 Lukas Appelhans <l.appelhans@gmx.de>                 *
+ *   Copyright © 2014 Aleix Pol Gonzalez <aleixpol@blue-systems.com>       *
+ *   Copyright © 2018 Abhijeet Sharma <sharma.abhijeet2096@gmail.com>      *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or         *
  *   modify it under the terms of the GNU General Public License as        *
@@ -17,37 +18,37 @@
  *   You should have received a copy of the GNU General Public License     *
  *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
-#include "SnapNotifier.h"
 
-#include <QDebug>
+#ifndef FWUPDSOURCESBACKEND_H
+#define FWUPDSOURCESBACKEND_H
 
-SnapNotifier::SnapNotifier(QObject* parent)
-    : BackendNotifierModule(parent)
+#include <resources/AbstractSourcesBackend.h>
+#include "FwupdBackend.h"
+#include <QStandardItemModel>
+
+class FwupdSourcesModel;
+
+class FwupdSourcesBackend : public AbstractSourcesBackend
 {
-}
+    Q_OBJECT
+public:
+    explicit FwupdSourcesBackend(AbstractResourcesBackend * parent);
 
-SnapNotifier::~SnapNotifier()
-{
-}
+    FwupdBackend* backend ;
+    QAbstractItemModel* sources() override;
+    bool addSource(const QString& id) override;
+    bool removeSource(const QString& id) override;
+    QString idDescription() override { return QString(); }
+    QList<QAction*> actions() const override;
+    bool supportsAdding() const override { return false; }
+    void eulaRequired(const QString& remoteName, const QString& licenseAgreement);
+    void populateSources();
+Q_SIGNALS:
+    void proceed() override;
+    void cancel() override;
 
-void SnapNotifier::recheckSystemUpdateNeeded()
-{
-    emit foundUpdates();
-}
+private:
+    FwupdSourcesModel* m_sources;
+};
 
-bool SnapNotifier::isSystemUpToDate() const
-{
-    return true;
-}
-
-uint SnapNotifier::securityUpdatesCount()
-{
-    return 0;
-}
-
-uint SnapNotifier::updatesCount()
-{
-    return 0;
-}
-
-#include "SnapNotifier.moc"
+#endif // FWUPDSOURCESBACKEND_H

@@ -23,7 +23,7 @@
 #include <resources/PackageState.h>
 #include <resources/AbstractResource.h>
 #include <Transaction/TransactionModel.h>
-#include <QDebug>
+#include "libdiscover_debug.h"
 
 ApplicationAddonsModel::ApplicationAddonsModel(QObject* parent)
     : QAbstractListModel(parent)
@@ -52,6 +52,11 @@ void ApplicationAddonsModel::setApplication(AbstractResource* app)
 
     m_app = app;
     resetState();
+    if (m_app) {
+        connect(m_app, &QObject::destroyed, this, [this](){
+            setApplication(nullptr);
+        });
+    }
     emit applicationChanged();
 }
 

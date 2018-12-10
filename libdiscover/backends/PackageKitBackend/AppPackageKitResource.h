@@ -32,8 +32,8 @@ class AppPackageKitResource : public PackageKitResource
 
         QString appstreamId() const override;
 
-        bool isTechnical() const override;
-        QString name() override;
+        AbstractResource::Type type() const override;
+        QString name() const override;
         QVariant icon() const override;
         QStringList mimetypes() const override;
         QStringList categories() override;
@@ -48,9 +48,13 @@ class AppPackageKitResource : public PackageKitResource
         QList<PackageState> addonsInformation() override;
         QStringList extends() const override;
         void fetchScreenshots() override;
-        void fetchChangelog() override;
         void invokeApplication() const override;
         bool canExecute() const override { return true; }
+        QDate releaseDate() const override;
+        QString changelog() const override;
+        QString author() const override;
+
+        void fetchChangelog() override;
 
     private:
         const AppStream::Component m_appdata;

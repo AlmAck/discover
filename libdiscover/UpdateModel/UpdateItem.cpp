@@ -23,9 +23,9 @@
 #include <resources/AbstractResourcesBackend.h>
 #include <resources/AbstractBackendUpdater.h>
 
-#include <QtCore/QStringBuilder>
+#include <QStringBuilder>
 #include <KLocalizedString>
-#include <QDebug>
+#include "libdiscover_debug.h"
 
 UpdateItem::UpdateItem(AbstractResource *app)
     : m_app(app)

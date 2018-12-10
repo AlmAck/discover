@@ -20,7 +20,7 @@
 
 import QtQuick 2.5
 import QtQuick.Layouts 1.1
-import QtQuick.Controls 1.1
+import QtQuick.Controls 2.1
 import org.kde.discover 2.0
 import org.kde.discover.app 1.0
 import org.kde.kirigami 2.0 as Kirigami
@@ -28,6 +28,10 @@ import "navigation.js" as Navigation
 
 Kirigami.GlobalDrawer {
     id: drawer
+
+    // FIXME: Dirty workaround for 385992
+    width: Kirigami.Units.gridUnit * 14
+
     property bool wideScreen: false
     bannerImageSource: "qrc:/banners/banner.svg"
     //make the left and bottom margins for search field the same
@@ -73,9 +77,17 @@ Kirigami.GlobalDrawer {
 
             onCurrentSearchTextChanged: {
                 var curr = window.leftPage;
-                if (!curr.hasOwnProperty("search")) {
-                    Navigation.clearStack()
-                    Navigation.openApplicationList( { search: currentSearchText })
+
+                if (pageStack.depth>1)
+                    pageStack.pop()
+
+                if (currentSearchText === "" && window.currentTopLevel === "" && !window.leftPage.category) {
+                    Navigation.openHome()
+                } else if (!curr.hasOwnProperty("search")) {
+                    if (currentSearchText) {
+                        Navigation.clearStack()
+                        Navigation.openApplicationList( { search: currentSearchText })
+                    }
                 } else {
                     curr.search = currentSearchText;
                     curr.forceActiveFocus()
@@ -105,8 +117,13 @@ Kirigami.GlobalDrawer {
             action: installedAction
         }
         ActionListItem {
-            action: settingsAction
+            action: sourcesAction
         }
+
+        ActionListItem {
+            action: aboutAction
+        }
+
         ActionListItem {
             objectName: "updateButton"
             action: updateAction
@@ -128,21 +145,12 @@ Kirigami.GlobalDrawer {
         ]
     }
 
-    function rootCategory(cat) {
-        var ret = null
-        while (cat) {
-            ret = cat
-            cat = cat.parent
-        }
-        return ret
-    }
-
     Component {
         id: categoryActionComponent
         Kirigami.Action {
             property QtObject category
             readonly property bool itsMe: window.leftPage && window.leftPage.hasOwnProperty("category") && (window.leftPage.category == category)
-            text: category.name
+            text: category ? category.name : ""
             checked: itsMe
             visible: (!window.leftPage
                    || !window.leftPage.subcategories
@@ -154,8 +162,10 @@ Kirigami.GlobalDrawer {
                 if (!window.leftPage.canNavigate)
                     Navigation.openCategory(category, currentSearchText)
                 else {
-                    window.leftPage.category = category
+                    if (pageStack.depth>1)
+                        pageStack.pop()
                     pageStack.currentIndex = 0
+                    window.leftPage.category = category
                 }
             }
         }

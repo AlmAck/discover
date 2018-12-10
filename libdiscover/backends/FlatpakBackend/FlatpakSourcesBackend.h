@@ -32,23 +32,34 @@ extern "C" {
 class FlatpakResource;
 class FlatpakSourcesBackend : public AbstractSourcesBackend
 {
+Q_OBJECT
 public:
     explicit FlatpakSourcesBackend(const QVector<FlatpakInstallation *>& installations, AbstractResourcesBackend *parent);
+    ~FlatpakSourcesBackend() override;
 
     QAbstractItemModel* sources() override;
     bool addSource(const QString &id) override;
     bool removeSource(const QString &id) override;
     QString idDescription() override;
     QList<QAction*> actions() const override;
+    bool supportsAdding() const override { return true; }
+    bool canFilterSources() const override { return true; }
 
     FlatpakRemote * installSource(FlatpakResource *resource);
+    bool canMoveSources() const override { return true; }
+
+    bool moveSource(const QString & sourceId, int delta) override;
+    int originIndex(const QString& sourceId) const;
+
 private:
+    QStandardItem* sourceById(const QString & sourceId) const;
     bool listRepositories(FlatpakInstallation *installation);
     void addRemote(FlatpakRemote *remote, FlatpakInstallation *installation);
 
     FlatpakInstallation *m_preferredInstallation;
     QStandardItemModel* m_sources;
     QAction* const m_flathubAction;
+    QStandardItem* m_noSourcesItem;
 };
 
 #endif // FLATPAKSOURCESBACKEND_H

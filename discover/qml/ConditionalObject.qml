@@ -1,6 +1,5 @@
 /***************************************************************************
- *   Copyright © 2017 Aleix Pol Gonzalez <aleixpol@blue-systems.com>       *
- *   Copyright © 2017 Jan Grulich <jgrulich@redhat.com>                    *
+ *   Copyright © 2018 Aleix Pol Gonzalez <aleixpol@blue-systems.com>       *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or         *
  *   modify it under the terms of the GNU General Public License as        *
@@ -19,33 +18,23 @@
  *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
-#include "CachedNetworkAccessManager.h"
+import QtQuick 2.1
 
-#include <QNetworkDiskCache>
-#include <QNetworkRequest>
-#include <QStandardPaths>
-#include <QStorageInfo>
-
-CachedNetworkAccessManager::CachedNetworkAccessManager(const QString &path, QObject *parent)
-    : QNetworkAccessManager(parent)
+QtObject
 {
-    const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QLatin1Char('/') + path;
-    QNetworkDiskCache *cache = new QNetworkDiskCache(this);
-    QStorageInfo storageInfo(cacheDir);
-    cache->setCacheDirectory(cacheDir);
-    cache->setMaximumCacheSize(storageInfo.bytesTotal() / 1000);
-    setCache(cache);
-}
+    id: root
 
-QNetworkReply * CachedNetworkAccessManager::createRequest(Operation op, const QNetworkRequest &request, QIODevice *outgoingData)
-{
-    QNetworkRequest req(request);
-    req.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-    return QNetworkAccessManager::createRequest(op, request, outgoingData);
-}
+    property Component componentTrue
+    property Component componentFalse
+    property bool condition
 
-QNetworkAccessManager * CachedNetworkAccessManagerFactory::create(QObject *parent)
-{
-    return new CachedNetworkAccessManager(QStringLiteral("images"), parent);
-}
+    onConditionChanged: {
+        if (object)
+            object.destroy(100)
 
+        var component = (condition ? componentTrue : componentFalse)
+        object = component ? component.createObject(root) : null
+    }
+
+    property QtObject object
+}

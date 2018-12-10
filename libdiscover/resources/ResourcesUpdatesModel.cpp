@@ -26,11 +26,7 @@
 #include "AbstractResource.h"
 #include "utils.h"
 #include <QDateTime>
-#include <QDBusConnection>
-#include <QDBusInterface>
-#include <QDBusMessage>
-#include <QDBusReply>
-#include <QDebug>
+#include "libdiscover_debug.h"
 
 #include <KLocalizedString>
 #include <KFormat>
@@ -46,8 +42,10 @@ public:
         bool cancelable = false;
         foreach(auto updater, m_allUpdaters) {
             connect(updater, &AbstractBackendUpdater::progressingChanged, this, &UpdateTransaction::slotProgressingChanged);
+            connect(updater, &AbstractBackendUpdater::downloadSpeedChanged, this, &UpdateTransaction::slotDownloadSpeedChanged);
             connect(updater, &AbstractBackendUpdater::progressChanged, this, &UpdateTransaction::slotUpdateProgress);
             connect(updater, &AbstractBackendUpdater::proceedRequest, this, &UpdateTransaction::processProceedRequest);
+            connect(updater, &AbstractBackendUpdater::cancelableChanged, this, [this](bool cancelable){ if (cancelable) setCancellable(true); });
             cancelable |= updater->isCancelable();
         }
         setCancellable(cancelable);
@@ -61,7 +59,7 @@ public:
     void cancel() override {
         QVector<AbstractBackendUpdater*> toCancel = m_updatersWaitingForFeedback.isEmpty() ? m_allUpdaters : m_updatersWaitingForFeedback;
 
-        foreach(auto updater, m_updatersWaitingForFeedback) {
+        foreach(auto updater, toCancel) {
             updater->cancel();
         }
     }
@@ -81,7 +79,7 @@ public:
 
     void slotProgressingChanged()
     {
-        if (status() < DoneStatus && !isProgressing()) {
+        if (status() > SetupStatus && status() < DoneStatus && !isProgressing()) {
             setStatus(Transaction::DoneStatus);
             Q_EMIT finished();
             deleteLater();
@@ -95,6 +93,15 @@ public:
             total += updater->progress();
         }
         setProgress(total / m_allUpdaters.count());
+    }
+
+    void slotDownloadSpeedChanged()
+    {
+        quint64 total = 0;
+        foreach(AbstractBackendUpdater* updater, m_allUpdaters) {
+            total += updater->downloadSpeed();
+        }
+        setDownloadSpeed(total);
     }
 
     QVariant icon() const override { return QStringLiteral("update-low"); }
@@ -130,6 +137,7 @@ void ResourcesUpdatesModel::init()
             connect(updater, &AbstractBackendUpdater::downloadSpeedChanged, this, &ResourcesUpdatesModel::downloadSpeedChanged);
             connect(updater, &AbstractBackendUpdater::resourceProgressed, this, &ResourcesUpdatesModel::resourceProgressed);
             connect(updater, &AbstractBackendUpdater::passiveMessage, this, &ResourcesUpdatesModel::passiveMessage);
+            connect(updater, &AbstractBackendUpdater::needsRebootChanged, this, &ResourcesUpdatesModel::needsRebootChanged);
             connect(updater, &AbstractBackendUpdater::destroyed, this, &ResourcesUpdatesModel::updaterDestroyed);
             m_updaters += updater;
 
@@ -162,7 +170,7 @@ void ResourcesUpdatesModel::message(const QString& msg)
 void ResourcesUpdatesModel::prepare()
 {
     if(isProgressing()) {
-        qWarning() << "trying to set up a running instance";
+        qCWarning(LIBDISCOVER_LOG) << "trying to set up a running instance";
         return;
     }
     foreach(AbstractBackendUpdater* upd, m_updaters) {
@@ -176,13 +184,23 @@ void ResourcesUpdatesModel::updateAll()
         delete m_transaction;
 
         const auto updaters = kFilter<QVector<AbstractBackendUpdater*>>(m_updaters, [](AbstractBackendUpdater* u) {return u->hasUpdates(); });
+        if (updaters.isEmpty()) {
+            return;
+        }
 
         m_transaction = new UpdateTransaction(this, updaters);
+        m_transaction->setStatus(Transaction::SetupStatus);
         setTransaction(m_transaction);
         TransactionModel::global()->addTransaction(m_transaction);
         Q_FOREACH (AbstractBackendUpdater* upd, updaters) {
             QMetaObject::invokeMethod(upd, "start", Qt::QueuedConnection);
         }
+
+        QMetaObject::invokeMethod(this, [this](){
+            m_transaction->setStatus(Transaction::CommittingStatus);
+            m_transaction->slotProgressingChanged();
+        }, Qt::QueuedConnection);
+
     }
 }
 
@@ -262,6 +280,15 @@ void ResourcesUpdatesModel::setTransaction(UpdateTransaction* transaction)
 Transaction* ResourcesUpdatesModel::transaction() const
 {
     return m_transaction.data();
+}
+
+bool ResourcesUpdatesModel::needsReboot() const
+{
+    for(auto upd: m_updaters) {
+        if (upd->needsReboot())
+            return true;
+    }
+    return false;
 }
 
 #include "ResourcesUpdatesModel.moc"

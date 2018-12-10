@@ -62,7 +62,7 @@ void DummyBackend::populate(const QString& n)
     const int start = m_resources.count();
     for(int i=start; i<start+m_startElements; i++) {
         const QString name = n+QLatin1Char(' ')+QString::number(i);
-        DummyResource* res = new DummyResource(name, false, this);
+        DummyResource* res = new DummyResource(name, AbstractResource::Application, this);
         res->setSize(100+(m_startElements-i));
         res->setState(AbstractResource::State(1+(i%3)));
         m_resources.insert(name.toLower(), res);
@@ -70,8 +70,17 @@ void DummyBackend::populate(const QString& n)
     }
 
     for(int i=start; i<start+m_startElements; i++) {
+        const QString name = QStringLiteral("addon")+QString::number(i);
+        DummyResource* res = new DummyResource(name, AbstractResource::Addon, this);
+        res->setState(AbstractResource::State(1+(i%3)));
+        res->setSize(300+(m_startElements-i));
+        m_resources.insert(name, res);
+        connect(res, &DummyResource::stateChanged, this, &DummyBackend::updatesCountChanged);
+    }
+
+    for(int i=start; i<start+m_startElements; i++) {
         const QString name = QStringLiteral("techie")+QString::number(i);
-        DummyResource* res = new DummyResource(name, true, this);
+        DummyResource* res = new DummyResource(name, AbstractResource::Technical, this);
         res->setState(AbstractResource::State(1+(i%3)));
         res->setSize(300+(m_startElements-i));
         m_resources.insert(name, res);
@@ -96,9 +105,16 @@ int DummyBackend::updatesCount() const
 ResultsStream* DummyBackend::search(const AbstractResourcesBackend::Filters& filter)
 {
     QVector<AbstractResource*> ret;
-    if (!filter.resourceUrl.isEmpty() && filter.resourceUrl.scheme() == QLatin1String("dummy"))
+    if (!filter.resourceUrl.isEmpty())
         return findResourceByPackageName(filter.resourceUrl);
     else foreach(AbstractResource* r, m_resources) {
+        if (r->type() == AbstractResource::Technical && filter.state != AbstractResource::Upgradeable) {
+            continue;
+        }
+
+        if (r->state() < filter.state)
+            continue;
+
         if(r->name().contains(filter.search, Qt::CaseInsensitive) || r->comment().contains(filter.search, Qt::CaseInsensitive))
             ret += r;
     }
@@ -151,7 +167,7 @@ void DummyBackend::checkForUpdates()
 
 AbstractResource * DummyBackend::resourceForFile(const QUrl& path)
 {
-    DummyResource* res = new DummyResource(path.fileName(), true, this);
+    DummyResource* res = new DummyResource(path.fileName(), AbstractResource::Technical, this);
     res->setSize(666);
     res->setState(AbstractResource::None);
     m_resources.insert(res->packageName(), res);
@@ -162,6 +178,11 @@ AbstractResource * DummyBackend::resourceForFile(const QUrl& path)
 QString DummyBackend::displayName() const
 {
     return QStringLiteral("Dummy");
+}
+
+bool DummyBackend::hasApplications() const
+{
+    return true;
 }
 
 #include "DummyBackend.moc"

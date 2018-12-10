@@ -69,8 +69,9 @@ void PKTransaction::trigger(PackageKit::Transaction::TransactionFlags flags)
     if (m_apps.size() == 1 && qobject_cast<LocalFilePKResource*>(m_apps.at(0))) {
         auto app = qobject_cast<LocalFilePKResource*>(m_apps.at(0));
         m_trans = PackageKit::Daemon::installFile(QUrl(app->packageName()).toLocalFile(), flags);
-        connect(m_trans.data(), &PackageKit::Transaction::finished, this, [app](PackageKit::Transaction::Exit status) {
-            if (status == PackageKit::Transaction::ExitSuccess) {
+        connect(m_trans.data(), &PackageKit::Transaction::finished, this, [this, app](PackageKit::Transaction::Exit status) {
+			const bool simulate = m_trans->transactionFlags() & PackageKit::Transaction::TransactionFlagSimulate;
+            if (!simulate && status == PackageKit::Transaction::ExitSuccess) {
                 app->markInstalled();
             }
         });
@@ -93,25 +94,36 @@ void PKTransaction::trigger(PackageKit::Transaction::TransactionFlags flags)
     connect(m_trans.data(), &PackageKit::Transaction::mediaChangeRequired, this, &PKTransaction::mediaChange);
     connect(m_trans.data(), &PackageKit::Transaction::requireRestart, this, &PKTransaction::requireRestart);
     connect(m_trans.data(), &PackageKit::Transaction::repoSignatureRequired, this, &PKTransaction::repoSignatureRequired);
-    connect(m_trans.data(), &PackageKit::Transaction::itemProgress, this, &PKTransaction::progressChanged);
+    connect(m_trans.data(), &PackageKit::Transaction::percentageChanged, this, &PKTransaction::progressChanged);
+    connect(m_trans.data(), &PackageKit::Transaction::statusChanged, this, &PKTransaction::statusChanged);
     connect(m_trans.data(), &PackageKit::Transaction::eulaRequired, this, &PKTransaction::eulaRequired);
     connect(m_trans.data(), &PackageKit::Transaction::allowCancelChanged, this, &PKTransaction::cancellableChanged);
+    connect(m_trans.data(), &PackageKit::Transaction::speedChanged, this, [this]() {
+        setDownloadSpeed(m_trans->speed());
+    });
     
     setCancellable(m_trans->allowCancel());
 }
 
-void PKTransaction::progressChanged(const QString &id, PackageKit::Transaction::Status status, uint percentage)
+void PKTransaction::statusChanged()
 {
-    PackageKitResource * res = qobject_cast<PackageKitResource*>(resource());
-    if (!res->allPackageNames().contains(PackageKit::Daemon::packageName(id)))
-        return;
+    setStatus(m_trans->status() == PackageKit::Transaction::StatusDownload ? Transaction::DownloadingStatus : Transaction::CommittingStatus);
+    progressChanged();
+}
 
-    setProgress(percentage);
+int percentageWithStatus(PackageKit::Transaction::Status status, uint percentage);
 
-    if (status == PackageKit::Transaction::StatusDownload)
-        setStatus(Transaction::DownloadingStatus);
-    else
-        setStatus(Transaction::CommittingStatus);
+void PKTransaction::progressChanged()
+{
+    auto percent = m_trans->percentage();
+    if (percent == 101) {
+        qWarning() << "percentage cannot be calculated";
+        percent = 50;
+    }
+
+    const auto processedPercentage = percentageWithStatus(m_trans->status(), qBound<int>(0, percent, 100));
+    if (processedPercentage >= 0)
+        setProgress(processedPercentage);
 }
 
 void PKTransaction::cancellableChanged()
@@ -134,6 +146,7 @@ void PKTransaction::cleanup(PackageKit::Transaction::Exit exit, uint runtime)
 {
     Q_UNUSED(runtime)
     const bool cancel = !m_proceedFunctions.isEmpty() || exit == PackageKit::Transaction::ExitCancelled;
+    const bool failed = exit == PackageKit::Transaction::ExitFailed || exit == PackageKit::Transaction::ExitUnknown;
     const bool simulate = m_trans->transactionFlags() & PackageKit::Transaction::TransactionFlagSimulate;
 
     disconnect(m_trans, nullptr, this, nullptr);
@@ -141,7 +154,7 @@ void PKTransaction::cleanup(PackageKit::Transaction::Exit exit, uint runtime)
 
     const auto backend = qobject_cast<PackageKitBackend*>(resource()->backend());
 
-    if (!cancel && simulate) {
+    if (!cancel && !failed && simulate) {
         auto packagesToRemove = m_newPackageStates.value(PackageKit::Transaction::InfoRemoving);
         QMutableListIterator<QString> i(packagesToRemove);
         QSet<AbstractResource*> removedResources;
@@ -153,10 +166,10 @@ void PKTransaction::cleanup(PackageKit::Transaction::Exit exit, uint runtime)
                 i.remove();
             }
         }
-        removedResources.subtract(m_apps.toList().toSet());
+        removedResources.subtract(kVectorToSet(m_apps));
 
         if (!packagesToRemove.isEmpty() || !removedResources.isEmpty()) {
-            QString msg = QStringLiteral("<ul><li>") + PackageKitResource::joinPackages(packagesToRemove, QStringLiteral("</li><li>"));
+            QString msg = QStringLiteral("<ul><li>") + PackageKitResource::joinPackages(packagesToRemove, QStringLiteral("</li><li>"), {});
             if (!removedResources.isEmpty()) {
                 const QStringList removedResourcesStr = kTransform<QStringList>(removedResources, [](AbstractResource* a) { return a->name(); });
                 msg += QLatin1Char('\n');
@@ -164,15 +177,23 @@ void PKTransaction::cleanup(PackageKit::Transaction::Exit exit, uint runtime)
             }
             msg += QStringLiteral("</li></ul>");
 
-            Q_EMIT proceedRequest(i18n("Confirm..."), i18np("To proceed with this action, the following package needs removal:\n%2", "To proceed with this action, the following packages need removal:\n%2", packagesToRemove.count(), msg));
+            Q_EMIT proceedRequest(i18n("Confirm package removal"), i18np("This action will also remove the following package:\n%2", "This action will also remove the following packages:\n%2", packagesToRemove.count(), msg));
         } else {
             proceed();
         }
         return;
     }
 
+    if (failed && m_newPackageStates.isEmpty())
+        m_newPackageStates.insert(PackageKit::Transaction::InfoAvailable, kTransform<QStringList>(m_apps, [](AbstractResource* res) { return res->packageName(); }));
+
     this->submitResolve();
-    setStatus(Transaction::CancelledStatus);
+    if (failed)
+        setStatus(Transaction::DoneWithErrorStatus);
+    else if (cancel)
+        setStatus(Transaction::CancelledStatus);
+    else
+        setStatus(Transaction::DoneStatus);
 }
 
 void PKTransaction::processProceedFunction()
@@ -210,15 +231,18 @@ void PKTransaction::packageResolved(PackageKit::Transaction::Info info, const QS
 void PKTransaction::submitResolve()
 {
     QStringList needResolving;
-    const auto pkgids = m_newPackageStates.value(PackageKit::Transaction::InfoFinished);
-    foreach(const auto pkgid, pkgids) {
-        needResolving += PackageKit::Daemon::packageName(pkgid);
+    foreach(const auto &pkgids, m_newPackageStates) {
+        foreach(const auto &pkgid, pkgids) {
+            needResolving += PackageKit::Daemon::packageName(pkgid);
+        }
     }
-    const auto backend = qobject_cast<PackageKitBackend*>(resource()->backend());
 
     if (!needResolving.isEmpty()) {
+        needResolving.removeDuplicates();
+        const auto backend = qobject_cast<PackageKitBackend*>(resource()->backend());
         backend->clearPackages(needResolving);
         backend->resolvePackages(needResolving);
+        backend->fetchUpdates();
     }
 }
 

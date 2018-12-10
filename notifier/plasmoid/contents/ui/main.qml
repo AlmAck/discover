@@ -33,15 +33,24 @@ Item
             return PlasmaCore.Types.PassiveStatus;
         case DiscoverNotifier.NormalUpdates:
         case DiscoverNotifier.SecurityUpdates:
+        case DiscoverNotifier.RebootRequired:
             return PlasmaCore.Types.ActiveStatus;
         }
     }
 
     Component.onCompleted: {
+        plasmoid.setAction("discover", i18n("Open Software Center..."), "plasma-discover");
         plasmoid.setAction("update", i18n("See Updates..."), "system-software-update");
+        plasmoid.setAction("refresh", i18n("Refresh..."), "view-refresh");
     }
 
+    function action_discover() {
+        DiscoverNotifier.showDiscover();
+    }
     function action_update() {
-        DiscoverNotifier.showMuon();
+        DiscoverNotifier.showDiscoverUpdates();
+    }
+    function action_refresh() {
+        DiscoverNotifier.recheckSystemUpdateNeeded();
     }
 }

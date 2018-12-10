@@ -23,6 +23,8 @@
 #include "FlatpakResource.h"
 #include "FlatpakBackend.h"
 #include <KLocalizedString>
+#include <KSharedConfig>
+#include <KConfigGroup>
 #include <QDebug>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -49,12 +51,8 @@ FlatpakSourcesBackend::FlatpakSourcesBackend(const QVector<FlatpakInstallation *
     , m_preferredInstallation(installations.constFirst())
     , m_sources(new QStandardItemModel(this))
     , m_flathubAction(new QAction(i18n("Add Flathub"), this))
+    , m_noSourcesItem(new QStandardItem(QStringLiteral("-")))
 {
-    QHash<int, QByteArray> roles = m_sources->roleNames();
-    roles.insert(Qt::CheckStateRole, "checked");
-    roles.insert(Qt::UserRole, "flatpakInstallation");
-    m_sources->setItemRoleNames(roles);
-
     m_flathubAction->setToolTip(QStringLiteral("flathub"));
     connect(m_flathubAction, &QAction::triggered, this, [this](){
         addSource(QStringLiteral("https://flathub.org/repo/flathub.flatpakrepo"));
@@ -65,6 +63,23 @@ FlatpakSourcesBackend::FlatpakSourcesBackend(const QVector<FlatpakInstallation *
         }
     }
 
+    m_noSourcesItem->setEnabled(false);
+    if (m_sources->rowCount() == 0) {
+        m_sources->appendRow(m_noSourcesItem);
+    }
+}
+
+FlatpakSourcesBackend::~FlatpakSourcesBackend()
+{
+    QStringList ids;
+    for (int i = 0, c = m_sources->rowCount(); i<c; ++i) {
+        auto it = m_sources->item(i);
+        ids << it->data(IdRole).toString();
+    }
+
+    auto conf = KSharedConfig::openConfig();
+    KConfigGroup group = conf->group("FlatpakSources");
+    group.writeEntry("Sources", ids);
 }
 
 QAbstractItemModel* FlatpakSourcesBackend::sources()
@@ -75,8 +90,11 @@ QAbstractItemModel* FlatpakSourcesBackend::sources()
 bool FlatpakSourcesBackend::addSource(const QString &id)
 {
     FlatpakBackend* backend = qobject_cast<FlatpakBackend*>(parent());
+    const QUrl flatpakrepoUrl(id);
 
-    const QUrl flatpakrepoUrl = QUrl::fromUserInput(id);
+    if (id.isEmpty() || !flatpakrepoUrl.isValid())
+        return false;
+
     if (flatpakrepoUrl.isLocalFile()) {
         auto res = backend->addSourceFromFlatpakRepo(flatpakrepoUrl);
         if (res)
@@ -100,7 +118,7 @@ bool FlatpakSourcesBackend::addSource(const QString &id)
     return true;
 }
 
-bool FlatpakSourcesBackend::removeSource(const QString &id)
+QStandardItem * FlatpakSourcesBackend::sourceById(const QString& id) const
 {
     QStandardItem* sourceIt = nullptr;
     for (int i = 0, c = m_sources->rowCount(); i<c; ++i) {
@@ -110,13 +128,22 @@ bool FlatpakSourcesBackend::removeSource(const QString &id)
             break;
         }
     }
+    return sourceIt;
+}
 
+bool FlatpakSourcesBackend::removeSource(const QString &id)
+{
+    auto sourceIt = sourceById(id);
     if (sourceIt) {
         FlatpakSourceItem *sourceItem = static_cast<FlatpakSourceItem*>(sourceIt);
         g_autoptr(GCancellable) cancellable = g_cancellable_new();
-        g_autoptr(GError) error = NULL;
+        g_autoptr(GError) error = nullptr;
         if (flatpak_installation_remove_remote(sourceItem->flatpakInstallation(), id.toUtf8().constData(), cancellable, &error)) {
             m_sources->removeRow(sourceItem->row());
+
+            if (m_sources->rowCount() == 0) {
+                m_sources->appendRow(m_noSourcesItem);
+            }
             return true;
         } else {
             qWarning() << "Failed to remove " << id << " remote repository:" << error->message;
@@ -216,14 +243,66 @@ void FlatpakSourcesBackend::addRemote(FlatpakRemote *remote, FlatpakInstallation
 
     FlatpakSourceItem *it = new FlatpakSourceItem(!title.isEmpty() ? title : id);
     it->setCheckState(flatpak_remote_get_disabled(remote) ? Qt::Unchecked : Qt::Checked);
-    it->setData(remoteUrl.host(), Qt::ToolTipRole);
+    it->setData(remoteUrl.isLocalFile() ? remoteUrl.toLocalFile() : remoteUrl.host(), Qt::ToolTipRole);
     it->setData(id, IdRole);
     it->setFlatpakInstallation(installation);
 
-    m_sources->appendRow(it);
+    int idx = -1;
+    {
+        const auto conf = KSharedConfig::openConfig();
+        const KConfigGroup group = conf->group("FlatpakSources");
+        const auto ids = group.readEntry<QStringList>("Sources", QStringList());
+
+        const auto ourIdx = ids.indexOf(id);
+        if (ourIdx<0) { //If not present, we put it on top
+            idx = 0;
+        } else {
+            idx=0;
+            for(int c=m_sources->rowCount(); idx<c; ++idx) {
+                const auto compIt = m_sources->item(idx);
+                const int compIdx = ids.indexOf(compIt->data(IdRole).toString());
+                if (compIdx >= ourIdx) {
+                    break;
+                }
+            }
+        }
+    }
+
+    m_sources->insertRow(idx, it);
+    if (m_sources->rowCount() == 1)
+        Q_EMIT firstSourceIdChanged();
+    Q_EMIT lastSourceIdChanged();
+
+    if (m_sources->rowCount() > 0) {
+        m_sources->takeRow(m_noSourcesItem->row());
+    }
 }
 
 QString FlatpakSourcesBackend::idDescription()
 {
     return i18n("Flatpak repository URI (*.flatpakrepo)");
+}
+
+bool FlatpakSourcesBackend::moveSource(const QString& sourceId, int delta)
+{
+    auto item = sourceById(sourceId);
+    if (!item)
+        return false;
+    const auto row = item->row();
+    auto prevRow = m_sources->takeRow(row);
+    Q_ASSERT(!prevRow.isEmpty());
+
+    const auto destRow = row + (delta>0? delta : delta);
+    m_sources->insertRow(destRow, prevRow);
+    if (destRow == 0 || row == 0)
+        Q_EMIT firstSourceIdChanged();
+    if (destRow == m_sources->rowCount() - 1 || row == m_sources->rowCount() - 1)
+        Q_EMIT lastSourceIdChanged();
+    return true;
+}
+
+int FlatpakSourcesBackend::originIndex(const QString& sourceId) const
+{
+    auto item = sourceById(sourceId);
+    return item ? item->row() : INT_MAX;
 }

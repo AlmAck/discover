@@ -25,6 +25,8 @@
 #include <KLocalizedString>
 #include <QProcess>
 #include <QRegularExpression>
+
+#include "ReviewsBackend/Rating.h"
 #include <knewstuff_version.h>
 
 KNSResource::KNSResource(const KNSCore::EntryInternal& entry, QStringList categories, KNSBackend* parent)
@@ -77,7 +79,7 @@ QString KNSResource::comment()
         if(newLine>0) {
             ret=ret.left(newLine);
         }
-        ret = ret.replace(QRegularExpression(QStringLiteral("\\[/?[a-z]*\\]")), QString());
+        ret = ret.replace(QRegularExpression(QStringLiteral("\\[\\/?[a-z]*\\]")), QString());
         ret = ret.remove(QRegularExpression(QStringLiteral("<[^>]*>")));
     }
     return ret;
@@ -95,11 +97,16 @@ QString KNSResource::longDescription()
     }
     ret = ret.replace(QLatin1Char('\r'), QString());
     ret = ret.replace(QStringLiteral("[li]"), QStringLiteral("\n* "));
-    ret = ret.replace(QRegularExpression(QStringLiteral("\\[/?[a-z]*\\]")), QString());
+    // Get rid of all BBCode markup we don't handle above
+    ret = ret.replace(QRegularExpression(QStringLiteral("\\[\\/?[a-z]*\\]")), QString());
+    // Find anything that looks like a link (but which also is not some html
+    // tag value or another already) and make it a link
+    static const QRegularExpression urlRegExp(QStringLiteral("(^|\\s)([-a-zA-Z0-9@:%_\\+.~#?&//=]{2,256}\\.[a-z]{2,4}\\b(\\/[-a-zA-Z0-9@:;%_\\+.~#?&//=]*)?)"), QRegularExpression::CaseInsensitiveOption);
+    ret = ret.replace(urlRegExp, QStringLiteral("<a href=\"\\2\">\\2</a>"));
     return ret;
 }
 
-QString KNSResource::name()
+QString KNSResource::name() const
 {
     return m_entry.name();
 }
@@ -167,7 +174,7 @@ QString KNSResource::section()
 
 static void appendIfValid(QList<QUrl>& list, const QUrl &value, const QUrl &fallback = {})
 {
-    if (list.contains(value)) {
+    if (!list.contains(value)) {
         if (value.isValid() && !value.isEmpty())
             list << value;
         else if (!fallback.isEmpty())
@@ -228,4 +235,44 @@ void KNSResource::invokeApplication() const
 QString KNSResource::executeLabel() const
 {
     return i18n("Use");
+}
+
+QDate KNSResource::releaseDate() const
+{
+    return m_entry.updateReleaseDate().isNull() ? m_entry.releaseDate() : m_entry.updateReleaseDate();
+}
+
+QVector<int> KNSResource::linkIds() const
+{
+    QVector<int> ids;
+    for(const auto &e : m_entry.downloadLinkInformationList()) {
+        if (e.isDownloadtypeLink)
+            ids << e.id;
+    }
+    return ids;
+}
+
+QUrl KNSResource::donationURL()
+{
+    return QUrl(m_entry.donationLink());
+}
+
+Rating * KNSResource::ratingInstance()
+{
+    if (!m_rating) {
+        const int noc = m_entry.numberOfComments();
+        const int rating = m_entry.rating();
+        Q_ASSERT(rating <= 100);
+        return new Rating(
+            packageName(),
+            noc,
+            { { QStringLiteral("star5"), rating } }
+        );
+    }
+    return m_rating;
+}
+
+QString KNSResource::author() const
+{
+    return m_entry.author().name();
 }

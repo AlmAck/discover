@@ -24,13 +24,68 @@
 #include <QProcess>
 #include <QBuffer>
 #include <QImageReader>
+#include <QStandardItemModel>
+#include <KLocalizedString>
+#include <utils.h>
 
-SnapResource::SnapResource(QSharedPointer<QSnapdSnap> snap, AbstractResource::State state, SnapBackend* parent)
-    : AbstractResource(parent)
+QDebug operator<<(QDebug debug, const QSnapdPlug& plug)
+{
+    QDebugStateSaver saver(debug);
+    debug.nospace() << "QSnapdPlug(";
+    debug.nospace() << "name:" << plug.name() << ',';
+    debug.nospace() << "snap:" << plug.snap() << ',';
+    debug.nospace() << "label:" << plug.label() << ',';
+    debug.nospace() << "interface:" << plug.interface() << ',';
+    debug.nospace() << "connectionCount:" << plug.connectionCount();
+    debug.nospace() << ')';
+    return debug;
+}
+
+QDebug operator<<(QDebug debug, const QSnapdSlot& slot)
+{
+    QDebugStateSaver saver(debug);
+    debug.nospace() << "QSnapdSlot(";
+    debug.nospace() << "name:" << slot.name() << ',';
+    debug.nospace() << "label:" << slot.label() << ',';
+    debug.nospace() << "snap:" << slot.snap() << ',';
+    debug.nospace() << "interface:" << slot.interface() << ',';
+    debug.nospace() << "connectionCount:" << slot.connectionCount();
+    debug.nospace() << ')';
+    return debug;
+}
+
+QDebug operator<<(QDebug debug, const QSnapdPlug* plug)
+{
+    QDebugStateSaver saver(debug);
+    debug.nospace() << "*" << *plug;
+    return debug;
+}
+
+QDebug operator<<(QDebug debug, const QSnapdSlot* slot)
+{
+    QDebugStateSaver saver(debug);
+    debug.nospace() << "*" << *slot;
+    return debug;
+}
+
+const QStringList SnapResource::m_objects({ QStringLiteral("qrc:/qml/PermissionsButton.qml")
+#ifdef SNAP_CHANNELS
+	, QStringLiteral("qrc:/qml/ChannelsButton.qml")
+#endif
+	});
+
+SnapResource::SnapResource(QSharedPointer<QSnapdSnap> snap, AbstractResource::State state, SnapBackend* backend)
+    : AbstractResource(backend)
     , m_state(state)
     , m_snap(snap)
 {
     setObjectName(snap->name());
+}
+
+QSnapdClient * SnapResource::client() const
+{
+    auto backend = qobject_cast<SnapBackend*>(parent());
+    return backend->client();
 }
 
 QString SnapResource::availableVersion() const
@@ -65,8 +120,7 @@ QVariant SnapResource::icon() const
             if (!iconPath.startsWith(QLatin1Char('/')))
                 return QUrl(iconPath);
 
-            auto backend = qobject_cast<SnapBackend*>(parent());
-            auto req = backend->client()->getIcon(packageName());
+            auto req = client()->getIcon(packageName());
             connect(req, &QSnapdGetIconRequest::complete, this, &SnapResource::gotIcon);
             req->runAsync();
             return {};
@@ -111,14 +165,14 @@ QString SnapResource::longDescription()
     return m_snap->description();
 }
 
-QString SnapResource::name()
+QString SnapResource::name() const
 {
     return m_snap->title().isEmpty() ? m_snap->name() : m_snap->title();
 }
 
 QString SnapResource::origin() const
 {
-    return QStringLiteral("snappy:") + m_snap->channel();
+    return QStringLiteral("Snap");
 }
 
 QString SnapResource::packageName() const
@@ -162,18 +216,12 @@ void SnapResource::fetchScreenshots()
 
 void SnapResource::invokeApplication() const
 {
-//     QProcess::startDetached(m_snap->price());
+    QProcess::startDetached(QStringLiteral("snap"), {QStringLiteral("run"), packageName()});
 }
 
-bool SnapResource::isTechnical() const
+AbstractResource::Type SnapResource::type() const
 {
-    return m_snap->snapType() != QLatin1String("app");
-}
-
-QUrl SnapResource::url() const
-{
-    //FIXME interim, until it has an appstreamId
-    return QUrl(QStringLiteral("snap://") + packageName());
+    return m_snap->snapType() != QLatin1String("app") ? Application : Technical;
 }
 
 void SnapResource::setSnap(const QSharedPointer<QSnapdSnap>& snap)
@@ -186,4 +234,227 @@ void SnapResource::setSnap(const QSharedPointer<QSnapdSnap>& snap)
     m_snap = snap;
     if (newSize)
         Q_EMIT sizeChanged();
+
+    Q_EMIT newSnap();
 }
+
+QDate SnapResource::releaseDate() const
+{
+    return {};
+}
+
+class PlugsModel : public QStandardItemModel
+{
+public:
+    enum Roles {
+        PlugNameRole = Qt::UserRole + 1,
+        SlotSnapRole,
+        SlotNameRole
+    };
+
+    PlugsModel(SnapResource* res, SnapBackend* backend, QObject* parent)
+        : QStandardItemModel(parent)
+        , m_res(res)
+        , m_backend(backend)
+    {
+        setItemRoleNames(roleNames().unite(
+            { {Qt::CheckStateRole, "checked"} }
+        ));
+
+        auto req = backend->client()->getInterfaces();
+        req->runSync();
+
+        QHash<QString, QVector<QSnapdSlot*>> slotsForInterface;
+        for (int i = 0; i<req->slotCount(); ++i) {
+            const auto slot = req->slot(i);
+            slot->setParent(this);
+            slotsForInterface[slot->interface()].append(slot);
+
+        }
+
+        const auto snap = m_res->snap();
+        for (int i = 0; i<req->plugCount(); ++i) {
+            const QScopedPointer<QSnapdPlug> plug(req->plug(i));
+            if (plug->snap() == snap->name()) {
+                if (plug->interface() == QLatin1String("content"))
+                    continue;
+
+                for (auto slot: slotsForInterface[plug->interface()]) {
+                    auto item = new QStandardItem;
+                    if (plug->label().isEmpty())
+                        item->setText(plug->name());
+                    else
+                        item->setText(i18n("%1 - %2", plug->name(), plug->label()));
+
+//                     qDebug() << "xxx" << plug->name() << plug->label() << plug->interface() << slot->snap() << "slot:" << slot->name() << slot->snap() << slot->interface() << slot->label();
+                    item->setCheckable(true);
+                    item->setCheckState(plug->connectionCount()>0 ? Qt::Checked : Qt::Unchecked);
+                    item->setData(plug->name(), PlugNameRole);
+                    item->setData(slot->snap(), SlotSnapRole);
+                    item->setData(slot->name(), SlotNameRole);
+                    appendRow(item);
+                }
+            }
+        }
+    }
+
+private:
+    bool setData(const QModelIndex & index, const QVariant & value, int role) override {
+        if (role != Qt::CheckStateRole)
+            return QStandardItemModel::setData(index, value, role);
+
+        auto item = itemFromIndex(index);
+        Q_ASSERT(item);
+        const QString plugName = item->data(PlugNameRole).toString();
+        const QString slotSnap = item->data(SlotSnapRole).toString();
+        const QString slotName = item->data(SlotNameRole).toString();
+
+        QSnapdRequest* req;
+
+        const auto snap = m_res->snap();
+        if (item->checkState() == Qt::Checked) {
+            req = m_backend->client()->disconnectInterface(snap->name(), plugName, slotSnap, slotName);
+        } else {
+            req = m_backend->client()->connectInterface(snap->name(), plugName, slotSnap, slotName);
+        }
+        req->runSync();
+        if (req->error()) {
+            qWarning() << "snapd error" << req->errorString();
+            m_res->backend()->passiveMessage(req->errorString());
+        }
+        return req->error() == QSnapdRequest::NoError;
+    }
+
+    SnapResource* const m_res;
+    SnapBackend* const m_backend;
+};
+
+QAbstractItemModel* SnapResource::plugs(QObject* p)
+{
+    if (!isInstalled())
+        return new QStandardItemModel(p);
+
+
+    return new PlugsModel(this, qobject_cast<SnapBackend*>(parent()), p);
+}
+
+QString SnapResource::appstreamId() const
+{
+    const QStringList ids
+#if defined(SNAP_COMMON_IDS)
+        = m_snap->commonIds()
+#endif
+    ;
+    return ids.isEmpty() ? QLatin1String("com.snap.") + m_snap->name() : ids.first();
+}
+
+QString SnapResource::channel() const
+{
+    auto req = client()->listOne(packageName());
+    req->runSync();
+    return req->error() ? QString() : req->snap()->trackingChannel();
+}
+
+QString SnapResource::author() const
+{
+#ifdef SNAP_PUBLISHER
+    QString author = m_snap->publisherDisplayName();
+    if (m_snap->publisherValidation() == QSnapdEnums::PublisherValidationVerified) {
+        author += QStringLiteral(" ✅");
+    }
+#else
+    QString author;
+#endif
+
+    return author;
+}
+
+void SnapResource::setChannel(const QString& channelName)
+{
+#ifdef SNAP_CHANNELS
+    Q_ASSERT(isInstalled());
+    auto request = client()->switchChannel(m_snap->name(), channelName);
+
+    const auto currentChannel = channel();
+    auto dest = new CallOnDestroy([this, currentChannel]() {
+        const auto newChannel = channel();
+        if (newChannel != currentChannel) {
+            Q_EMIT channelChanged(newChannel);
+        }
+    });
+
+    request->runAsync();
+    connect(request, &QSnapdRequest::complete, dest, &QObject::deleteLater);
+#endif
+}
+
+void SnapResource::refreshSnap()
+{
+    auto request = client()->find(QSnapdClient::FindFlag::MatchName, m_snap->name());
+    connect(request, &QSnapdRequest::complete, this, [this, request](){
+        if (request->error()) {
+            qWarning() << "error" << request->error() << ": " << request->errorString();
+            return;
+        }
+        Q_ASSERT(request->snapCount() == 1);
+        setSnap(QSharedPointer<QSnapdSnap>(request->snap(0)));
+    });
+    request->runAsync();
+}
+
+#ifdef SNAP_CHANNELS
+class Channels : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(QList<QObject *> channels READ channels NOTIFY channelsChanged)
+
+public:
+    Channels(SnapResource* res, QObject* parent) : QObject(parent), m_res(res) {
+        if (res->snap()->channelCount() == 0)
+            res->refreshSnap();
+        else
+            refreshChannels();
+
+        connect(res, &SnapResource::newSnap, this, &Channels::refreshChannels);
+    }
+
+
+    void refreshChannels()
+    {
+        qDeleteAll(m_channels);
+        m_channels.clear();
+
+        auto s = m_res->snap();
+        for(int i=0, c=s->channelCount(); i<c; ++i) {
+            auto channel = s->channel(i);
+            channel->setParent(this);
+            m_channels << channel;
+        }
+        Q_EMIT channelsChanged();
+    }
+
+    QList<QObject *> channels() const
+    {
+        return m_channels;
+    }
+
+Q_SIGNALS:
+    void channelsChanged();
+
+private:
+    QList<QObject*> m_channels;
+    SnapResource* const m_res;
+};
+
+#endif
+
+QObject * SnapResource::channels(QObject* parent)
+{
+#ifdef SNAP_CHANNELS
+    return new Channels(this, parent);
+#else
+    return nullptr;
+#endif
+}
+
+#include "SnapResource.moc"

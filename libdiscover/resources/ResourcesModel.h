@@ -35,6 +35,7 @@ class DISCOVERCOMMON_EXPORT AggregatedResultsStream : public ResultsStream
 Q_OBJECT
 public:
     AggregatedResultsStream(const QSet<ResultsStream*>& streams);
+    ~AggregatedResultsStream();
 
 Q_SIGNALS:
     void finished();
@@ -76,7 +77,6 @@ class DISCOVERCOMMON_EXPORT ResourcesModel : public QObject
         
         Q_SCRIPTABLE bool isExtended(const QString &id);
 
-        AggregatedResultsStream* findResourceByPackageName(const QUrl& search);
         AggregatedResultsStream* search(const AbstractResourcesBackend::Filters &search);
         AbstractResource* resourceForFile(const QUrl &/*url*/);
         void checkForUpdates();

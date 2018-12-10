@@ -26,22 +26,20 @@
 #include <QProcess>
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <KLocalizedString>
 #include "libsnapclient/config-paths.h"
 #include "utils.h"
 
-SnapTransaction::SnapTransaction(SnapResource* app, QSnapdRequest* request, Role role, AbstractResource::State newState)
+SnapTransaction::SnapTransaction(QSnapdClient* client, SnapResource* app, Role role, AbstractResource::State newState)
     : Transaction(app, app, role)
+    , m_client(client)
     , m_app(app)
-    , m_request(request)
     , m_newState(newState)
 {
-    setCancellable(false);
-    connect(request, &QSnapdRequest::progress, this, &SnapTransaction::progressed);
-    connect(request, &QSnapdRequest::complete, this, &SnapTransaction::finishTransaction);
-    setStatus(SetupStatus);
-
-    setStatus(DownloadingStatus);
-    request->runAsync();
+    if (role == RemoveRole)
+        setRequest(m_client->remove(app->packageName()));
+    else
+        setRequest(m_client->install(app->packageName()));
 }
 
 void SnapTransaction::cancel()
@@ -54,9 +52,18 @@ void SnapTransaction::finishTransaction()
     switch(m_request->error()) {
         case QSnapdRequest::NoError:
             static_cast<SnapBackend*>(m_app->backend())->refreshStates();
+            setStatus(DoneStatus);
             m_app->setState(m_newState);
             break;
+        case QSnapdRequest::NeedsClassic:
+            setStatus(SetupStatus);
+            if (role() == Transaction::InstallRole) {
+                Q_EMIT proceedRequest(m_app->name(), i18n("This snap application needs security confinement measures disabled."));
+                return;
+            }
+            break;
         case QSnapdRequest::AuthDataRequired: {
+            setStatus(SetupStatus);
             QProcess* p = new QProcess;
             p->setProgram(QStringLiteral(CMAKE_INSTALL_FULL_LIBEXECDIR "/discover/SnapMacaroonDialog"));
             p->start();
@@ -66,7 +73,7 @@ void SnapTransaction::finishTransaction()
                 if (code != 0) {
                     qWarning() << "login failed... code:" << code << p->readAll();
                     Q_EMIT passiveMessage(m_request->errorString());
-                    setStatus(DoneStatus);
+                    setStatus(DoneWithErrorStatus);
                     return;
                 }
                 const auto doc = QJsonDocument::fromJson(p->readAllStandardOutput());
@@ -79,20 +86,46 @@ void SnapTransaction::finishTransaction()
             });
         }   return;
         default:
+            setStatus(DoneWithErrorStatus);
+            qDebug() << "snap error" << m_request << m_request->error() << m_request->errorString();
             Q_EMIT passiveMessage(m_request->errorString());
             break;
     }
+}
 
-    setStatus(DoneStatus);
+void SnapTransaction::proceed()
+{
+    setRequest(m_client->install(QSnapdClient::Classic, m_app->packageName()));
+}
+
+void SnapTransaction::setRequest(QSnapdRequest* req)
+{
+    m_request.reset(req);
+
+    setCancellable(false);
+    connect(m_request.data(), &QSnapdRequest::progress, this, &SnapTransaction::progressed);
+    connect(m_request.data(), &QSnapdRequest::complete, this, &SnapTransaction::finishTransaction);
+
+    setStatus(SetupStatus);
+    m_request->runAsync();
 }
 
 void SnapTransaction::progressed()
 {
     const auto change = m_request->change();
     int percentage = 0, count = 0;
+
+    auto status = SetupStatus;
     for(int i = 0, c = change->taskCount(); i<c; ++i) {
         ++count;
-        percentage += (100 * change->task(i)->progressDone()) / change->task(i)->progressTotal();
+        auto task = change->task(i);
+        if (task->kind() == QLatin1String("download-snap")) {
+            status = task->status() == QLatin1String("doing") || task->status() == QLatin1String("do") ? DownloadingStatus : CommittingStatus;
+        } else if (task->kind() == QLatin1String("clear-snap")) {
+            status = CommittingStatus;
+        }
+        percentage += (100 * task->progressDone()) / task->progressTotal();
     }
     setProgress(percentage / qMax(count, 1));
+    setStatus(status);
 }

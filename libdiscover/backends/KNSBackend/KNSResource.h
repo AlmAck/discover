@@ -23,6 +23,7 @@
 
 #include <resources/AbstractResource.h>
 #include <KNSCore/EntryInternal>
+#include <QPointer>
 #include <attica/content.h>
 
 #include "discovercommon_export.h"
@@ -38,7 +39,7 @@ public:
     AbstractResource::State state() override;
     QVariant icon() const override;
     QString comment() override;
-    QString name() override;
+    QString name() const override;
     QString packageName() const override;
     QStringList categories() override;
     QUrl homepage() override;
@@ -53,6 +54,8 @@ public:
     int size() override;
     void fetchChangelog() override;
     QStringList extends() const override;
+    AbstractResource::Type type() const override { return Addon; }
+    QString author() const override;
 
     KNSBackend* knsBackend() const;
 
@@ -65,11 +68,18 @@ public:
 
     QUrl url() const override;
     QString executeLabel() const override;
+    QString sourceIcon() const override { return QStringLiteral("get-hot-new-stuff"); }
+    QDate releaseDate() const override;
+    QVector<int> linkIds() const;
+    QUrl donationURL() override;
+
+    Rating* ratingInstance();
 
 private:
     const QStringList m_categories;
     KNSCore::EntryInternal m_entry;
     KNS3::Entry::Status m_lastStatus;
+    QPointer<Rating> m_rating;
 };
 
 #endif // KNSRESOURCE_H

@@ -1,8 +1,7 @@
 import QtQuick 2.1
-import QtQuick.Controls 1.1
+import QtQuick.Controls 2.1
 import QtQuick.Layouts 1.1
 import org.kde.discover 2.0
-import org.kde.kquickcontrolsaddons 2.0
 import "navigation.js" as Navigation
 import org.kde.kirigami 2.0 as Kirigami
 
@@ -18,7 +17,7 @@ Kirigami.OverlaySheet
     {
         visible: addonsView.containsAddons
         enabled: !addonsView.isInstalling
-        spacing: 5
+        spacing: Kirigami.Units.largeSpacing
 
         Kirigami.Heading {
             level: 3
@@ -67,17 +66,17 @@ Kirigami.OverlaySheet
 
         RowLayout {
             readonly property bool active: addonsModel.hasChanges && !addonsView.isInstalling
-            spacing: 5
+            spacing: Kirigami.Units.largeSpacing
 
             Button {
-                iconName: "dialog-ok"
+                icon.name: "dialog-ok"
                 text: i18n("Apply Changes")
                 onClicked: addonsModel.applyChanges()
 
                 visible: parent.active
             }
             Button {
-                iconName: "document-revert"
+                icon.name: "document-revert"
                 text: i18n("Discard")
                 onClicked: addonsModel.discardChanges()
 
@@ -85,7 +84,7 @@ Kirigami.OverlaySheet
             }
             Item {
                 Layout.fillWidth: true
-                height: 5
+                height: Kirigami.Units.largeSpacing
             }
             Button {
                 Layout.alignment: Qt.AlignRight

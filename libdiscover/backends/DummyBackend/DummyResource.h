@@ -28,7 +28,7 @@ class DummyResource : public AbstractResource
 {
 Q_OBJECT
 public:
-    explicit DummyResource(QString  name, bool isTechnical, AbstractResourcesBackend* parent);
+    explicit DummyResource(QString name, AbstractResource::Type type, AbstractResourcesBackend* parent);
 
     QList<PackageState> addonsInformation() override;
     QString section() override;
@@ -46,28 +46,31 @@ public:
     AbstractResource::State state() override;
     QVariant icon() const override;
     QString comment() override;
-    QString name() override;
+    QString name() const override;
     QString packageName() const override;
-    bool isTechnical() const override { return m_isTechnical; }
+    AbstractResource::Type type() const override { return m_type; }
     bool canExecute() const override { return true; }
     void invokeApplication() const override;
     void fetchChangelog() override;
     void fetchScreenshots() override;
     QUrl url() const override;
+    QString author() const override { return QStringLiteral("BananaPerson"); }
     void setState(State state);
     void setSize(int size) { m_size = size; }
     void setAddons(const AddonList& addons);
 
     void setAddonInstalled(const QString& addon, bool installed);
+    QString sourceIcon() const override { return QStringLiteral("player-time"); }
+    QDate releaseDate() const override { return {}; }
 
 public:
-    QString m_name;
+    const QString m_name;
     AbstractResource::State m_state;
     QList<QUrl> m_screenshots;
     QList<QUrl> m_screenshotThumbnails;
     QString m_iconName;
     QList<PackageState> m_addons;
-    bool m_isTechnical;
+    const AbstractResource::Type m_type;
     int m_size;
 };
 

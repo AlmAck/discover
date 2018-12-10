@@ -20,7 +20,7 @@
 
 #include "Rating.h"
 #include <QStringList>
-#include <QDebug>
+#include "libdiscover_debug.h"
 #include <qmath.h>
 
 inline double fastPow(double a, double b) {
@@ -103,7 +103,7 @@ Rating::Rating(const QString &packageName, quint64 ratingCount, const QVariantMa
     // TODO consider storing this and present in UI
     , m_rating(((data.value(QStringLiteral("star1")).toInt() + (data.value(QStringLiteral("star2")).toInt() * 2) +
                 (data.value(QStringLiteral("star3")).toInt() * 3) + (data.value(QStringLiteral("star4")).toInt() * 4) +
-                (data.value(QStringLiteral("star5")).toInt() * 5)) * 2) / (float) ratingCount)
+                (data.value(QStringLiteral("star5")).toInt() * 5)) * 2) / qMax<float>(1, ratingCount))
     , m_ratingPoints(0)
     , m_sortableRating(0)
 {
@@ -115,39 +115,6 @@ Rating::Rating(const QString &packageName, quint64 ratingCount, const QVariantMa
 
     for(int i=0; i<histo.size(); ++i) {
         int points = histo[i];
-        m_ratingPoints += (i+1)*points;
-        spread.append(points);
-    }
-
-    m_sortableRating = dampenedRating(spread) * 2;
-}
-
-Rating::Rating(QString packageName, int inst)
-    : QObject()
-    , m_packageName(std::move(packageName))
-    , m_ratingCount(inst)
-    , m_rating(0)
-    , m_ratingPoints(0)
-    , m_sortableRating(m_rating)
-{
-}
-
-Rating::Rating(const QString &packageName, quint64 ratingCount, double rating, const QString &histogram)
-    : QObject()
-    , m_packageName(packageName)
-    , m_ratingCount(ratingCount)
-    , m_rating(rating)
-    , m_ratingPoints(0)
-    , m_sortableRating(0)
-{
-    Q_ASSERT(rating <= 10 && rating>=-1);
-
-    const auto histo = histogram.midRef(1,histogram.size()-2).split(QStringLiteral(", "));
-    QVector<int> spread;
-    spread.reserve(histo.size());
-
-    for(int i=0; i<histo.size(); ++i) {
-        int points = histo[i].toInt();
         m_ratingPoints += (i+1)*points;
         spread.append(points);
     }

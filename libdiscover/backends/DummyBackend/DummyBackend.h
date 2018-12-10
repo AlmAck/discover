@@ -39,7 +39,7 @@ public:
     AbstractBackendUpdater* backendUpdater() const override;
     AbstractReviewsBackend* reviewsBackend() const override;
     ResultsStream* search(const AbstractResourcesBackend::Filters & search) override;
-    ResultsStream * findResourceByPackageName(const QUrl& search) override;
+    ResultsStream * findResourceByPackageName(const QUrl& search);
     QHash<QString, DummyResource*> resources() const { return m_resources; }
     bool isValid() const override { return true; } // No external file dependencies that could cause runtime errors
 
@@ -50,6 +50,7 @@ public:
     AbstractResource * resourceForFile(const QUrl & ) override;
     void checkForUpdates() override;
     QString displayName() const override;
+    bool hasApplications() const override;
 
 public Q_SLOTS:
     void toggleFetching();

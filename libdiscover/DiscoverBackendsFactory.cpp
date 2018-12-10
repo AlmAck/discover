@@ -22,7 +22,7 @@
 #include "resources/AbstractResourcesBackend.h"
 #include "resources/ResourcesModel.h"
 #include "utils.h"
-#include <QDebug>
+#include "libdiscover_debug.h"
 #include <QStandardPaths>
 #include <QDir>
 #include <QCommandLineParser>
@@ -38,6 +38,11 @@ Q_GLOBAL_STATIC(QStringList, s_requestedBackends)
 void DiscoverBackendsFactory::setRequestedBackends(const QStringList& backends)
 {
     *s_requestedBackends = backends;
+}
+
+bool DiscoverBackendsFactory::hasRequestedBackends()
+{
+    return !s_requestedBackends->isEmpty();
 }
 
 DiscoverBackendsFactory::DiscoverBackendsFactory()
@@ -56,15 +61,15 @@ QVector<AbstractResourcesBackend*> DiscoverBackendsFactory::backendForFile(const
 {
     QPluginLoader* loader = new QPluginLoader(QStringLiteral("discover/") + libname, ResourcesModel::global());
 
-    //     qDebug() << "trying to load plugin:" << loader->fileName();
+    //     qCDebug(LIBDISCOVER_LOG) << "trying to load plugin:" << loader->fileName();
     AbstractResourcesBackendFactory* f = qobject_cast<AbstractResourcesBackendFactory*>(loader->instance());
     if(!f) {
-        qWarning() << "error loading" << libname << loader->errorString() << loader->metaData();
+        qCWarning(LIBDISCOVER_LOG) << "error loading" << libname << loader->errorString() << loader->metaData();
         return {};
     }
     auto instances = f->newInstance(ResourcesModel::global(), name);
     if(instances.isEmpty()) {
-        qWarning() << "Couldn't find the backend: " << libname << "among" << allBackendNames(false, true);
+        qCWarning(LIBDISCOVER_LOG) << "Couldn't find the backend: " << libname << "among" << allBackendNames(false, true);
         return instances;
     }
 
@@ -90,6 +95,7 @@ QStringList DiscoverBackendsFactory::allBackendNames(bool whitelist, bool allowD
         }
     }
 
+    pluginNames.removeDuplicates(); //will happen when discover is installed twice on the system
     return pluginNames;
 }
 
@@ -100,7 +106,7 @@ QVector<AbstractResourcesBackend*> DiscoverBackendsFactory::allBackends() const
     ret.removeAll(nullptr);
 
     if(ret.isEmpty())
-        qWarning() << "Didn't find any Discover backend!";
+        qCWarning(LIBDISCOVER_LOG) << "Didn't find any Discover backend!";
     return ret;
 }
 
@@ -116,5 +122,10 @@ void DiscoverBackendsFactory::setupCommandLine(QCommandLineParser* parser)
 
 void DiscoverBackendsFactory::processCommandLine(QCommandLineParser* parser, bool test)
 {
-    *s_requestedBackends = test ? QStringList{ QStringLiteral("dummy-backend") } : parser->value(QStringLiteral("backends")).split(QLatin1Char(','), QString::SkipEmptyParts);
+    QStringList backends = test ? QStringList{ QStringLiteral("dummy-backend") } : parser->value(QStringLiteral("backends")).split(QLatin1Char(','), QString::SkipEmptyParts);
+    for(auto &backend: backends) {
+        if (!backend.endsWith(QLatin1String("-backend")))
+            backend.append(QLatin1String("-backend"));
+    }
+    *s_requestedBackends = backends;
 }

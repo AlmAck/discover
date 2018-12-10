@@ -24,6 +24,7 @@
 #include <AppStreamQt/image.h>
 #include <AppStreamQt/release.h>
 #include <appstream/AppStreamUtils.h>
+#include <PackageKit/Daemon>
 #include <KLocalizedString>
 #include <KToolInvocation>
 #include <QIcon>
@@ -31,6 +32,7 @@
 #include <QStandardPaths>
 #include <QDebug>
 #include "config-paths.h"
+#include "utils.h"
 
 AppPackageKitResource::AppPackageKitResource(const AppStream::Component& data, const QString &packageName, PackageKitBackend* parent)
     : PackageKitResource(packageName, QString(), parent)
@@ -39,9 +41,21 @@ AppPackageKitResource::AppPackageKitResource(const AppStream::Component& data, c
     Q_ASSERT(data.isValid());
 }
 
-QString AppPackageKitResource::name()
+QString AppPackageKitResource::name() const
 {
-    return m_appdata.name();
+    QString ret;
+    if (!m_appdata.extends().isEmpty()) {
+        auto components = backend()->componentsById(m_appdata.extends().constFirst());
+
+        if (components.isEmpty())
+            qWarning() << "couldn't find" << m_appdata.extends() << "which is supposedly extended by" << m_appdata.id();
+        else
+            ret = components.constFirst().name() + QStringLiteral(" - ") + m_appdata.name();
+    }
+
+    if (ret.isEmpty())
+        ret = m_appdata.name();
+    return ret;
 }
 
 QString AppPackageKitResource::longDescription()
@@ -56,10 +70,7 @@ QString AppPackageKitResource::longDescription()
 static QIcon componentIcon(const AppStream::Component &comp)
 {
     QIcon ret;
-    const auto icons = comp.icons();
-    if (icons.isEmpty()) {
-        ret = QIcon::fromTheme(QStringLiteral("package-x-generic"));
-    } else foreach(const AppStream::Icon &icon, icons) {
+    foreach(const AppStream::Icon &icon, comp.icons()) {
         QStringList stock;
         switch(icon.kind()) {
             case AppStream::Icon::KindLocal:
@@ -68,15 +79,18 @@ static QIcon componentIcon(const AppStream::Component &comp)
             case AppStream::Icon::KindCached:
                 ret.addFile(icon.url().toLocalFile(), icon.size());
                 break;
-            case AppStream::Icon::KindStock:
-                stock += icon.name();
+            case AppStream::Icon::KindStock: {
+                const auto ret = QIcon::fromTheme(icon.name());
+                if (!ret.isNull())
+                    return ret;
                 break;
+            }
             default:
                 break;
         }
-        if (ret.isNull() && !stock.isEmpty()) {
-            ret = QIcon::fromTheme(stock.first());
-        }
+    }
+    if (ret.isNull()) {
+        ret = QIcon::fromTheme(QStringLiteral("package-x-generic"));
     }
     return ret;
 }
@@ -139,45 +153,36 @@ QUrl AppPackageKitResource::donationURL()
     return m_appdata.url(AppStream::Component::UrlKindDonation);
 }
 
-bool AppPackageKitResource::isTechnical() const
+AbstractResource::Type AppPackageKitResource::type() const
 {
     static QString desktop = QString::fromUtf8(qgetenv("XDG_CURRENT_DESKTOP"));
     const auto desktops = m_appdata.compulsoryForDesktops();
-    return (!desktops.isEmpty() && !desktops.contains(desktop)) || m_appdata.kind() == AppStream::Component::KindAddon;
+    return m_appdata.kind() == AppStream::Component::KindAddon   ? Addon
+           : (desktops.isEmpty() || !desktops.contains(desktop)) ? Application
+                                                                 : Technical;
 }
 
 void AppPackageKitResource::fetchScreenshots()
 {
-    QList<QUrl> thumbnails, screenshots;
-
-    Q_FOREACH (const AppStream::Screenshot &s, m_appdata.screenshots()) {
-        const QUrl thumbnail = AppStreamUtils::imageOfKind(s.images(), AppStream::Image::KindThumbnail);
-        const QUrl plain = AppStreamUtils::imageOfKind(s.images(), AppStream::Image::KindSource);
-        if (plain.isEmpty())
-            qWarning() << "invalid screenshot for" << name();
-
-        screenshots << plain;
-        thumbnails << (thumbnail.isEmpty() ? plain : thumbnail);
-    }
-
-    Q_EMIT screenshotsFetched(thumbnails, screenshots);
+    const auto sc = AppStreamUtils::fetchScreenshots(m_appdata);
+    Q_EMIT screenshotsFetched(sc.first, sc.second);
 }
 
 QStringList AppPackageKitResource::allPackageNames() const
 {
-    return m_appdata.packageNames();
+    auto ret = m_appdata.packageNames();
+    if (ret.isEmpty()) {
+        ret = QStringList{ PackageKit::Daemon::packageName(availablePackageId()) };
+    }
+    return ret;
 }
 
 QList<PackageState> AppPackageKitResource::addonsInformation()
 {
-    const PackageKitBackend* p = static_cast<PackageKitBackend*>(parent());
-    const QVector<AppPackageKitResource*> res = p->extendedBy(m_appdata.id());
-
-    QList<PackageState> ret;
-    Q_FOREACH (AppPackageKitResource* r, res) {
-        ret += PackageState(r->appstreamId(), r->name(), r->comment(), r->isInstalled());
-    }
-    return ret;
+    return kTransform<QList<PackageState>>(
+        backend()->extendedBy(m_appdata.id()),
+        [](AppPackageKitResource* r) { return PackageState(r->appstreamId(), r->name(), r->comment(), r->isInstalled()); }
+    );
 }
 
 QStringList AppPackageKitResource::extends() const
@@ -185,24 +190,58 @@ QStringList AppPackageKitResource::extends() const
     return m_appdata.extends();
 }
 
-void AppPackageKitResource::fetchChangelog()
+QString AppPackageKitResource::changelog() const
 {
-    QString changelog;
-    for(const auto& rel: m_appdata.releases()) {
-        changelog += QStringLiteral("<h3>") + rel.version() + QStringLiteral("</h3>");
-        changelog += QStringLiteral("<p>") + rel.description() + QStringLiteral("</p>");
-    }
-    emit changelogFetched(changelog);
+    return AppStreamUtils::changelogToHtml(m_appdata);
 }
 
 void AppPackageKitResource::invokeApplication() const
 {
-    const QStringList exes = m_appdata.provided(AppStream::Provided::KindBinary).items();
-    if (exes.isEmpty()) {
-        const auto servicePath = QStandardPaths::locate(QStandardPaths::ApplicationsLocation, m_appdata.id());
-        QProcess::startDetached(QStringLiteral(CMAKE_INSTALL_FULL_LIBEXECDIR_KF5 "/discover/runservice"), {servicePath});
-    } else {
-        QProcess::startDetached(exes.constFirst());
-    }
+    auto trans = PackageKit::Daemon::getFiles({installedPackageId()});
+    connect(trans, &PackageKit::Transaction::files, this, [this](const QString &/*packageID*/, const QStringList &filenames) {
+        const auto allServices = QStandardPaths::locateAll(QStandardPaths::ApplicationsLocation, m_appdata.id());
+        if (!allServices.isEmpty()) {
+            const auto packageServices = kFilter<QStringList>(allServices, [filenames](const QString &file) { return filenames.contains(file); });
+            QProcess::startDetached(QStringLiteral(CMAKE_INSTALL_FULL_LIBEXECDIR_KF5 "/discover/runservice"), {packageServices});
+        } else {
+            const QStringList exes = m_appdata.provided(AppStream::Provided::KindBinary).items();
+            const auto packageExecutables = kFilter<QStringList>(allServices, [filenames](const QString &exe) { return filenames.contains(QLatin1Char('/') + exe); });
+            if (!packageExecutables.isEmpty()) {
+                QProcess::startDetached(exes.constFirst());
+            } else {
+                const auto locations = QStandardPaths::standardLocations(QStandardPaths::ApplicationsLocation);
+                const auto desktopFiles = kFilter<QStringList>(filenames, [locations](const QString &exe) {
+                    for (const auto &location: locations) {
+                        if (exe.startsWith(location))
+                            return exe.contains(QLatin1String(".desktop"));
+                    }
+                    return false;
+                });
+                if (!desktopFiles.isEmpty()) {
+                    QProcess::startDetached(QStringLiteral(CMAKE_INSTALL_FULL_LIBEXECDIR_KF5 "/discover/runservice"), { desktopFiles });
+                }
+            }
+            qWarning() << "Could not find any executables" << exes << filenames;
+        }
+    });
 }
 
+QDate AppPackageKitResource::releaseDate() const
+{
+    if (!m_appdata.releases().isEmpty()) {
+        auto release = m_appdata.releases().constFirst();
+        return release.timestamp().date();
+    }
+
+    return {};
+}
+
+QString AppPackageKitResource::author() const
+{
+    return m_appdata.developerName();
+}
+
+void AppPackageKitResource::fetchChangelog()
+{
+    emit changelogFetched(changelog());
+}

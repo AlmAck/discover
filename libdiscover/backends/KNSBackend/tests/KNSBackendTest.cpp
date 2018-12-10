@@ -21,7 +21,6 @@
 #include "KNSBackendTest.h"
 #include "utils.h"
 #include <KNSBackend.h>
-#include <KXmlGuiWindow>
 #include <resources/AbstractBackendUpdater.h>
 #include <resources/AbstractResource.h>
 #include <resources/ResourcesModel.h>
@@ -58,15 +57,18 @@ KNSBackendTest::KNSBackendTest(QObject* parent)
     connect(m_backend->reviewsBackend(), &AbstractReviewsBackend::reviewsReady, this, &KNSBackendTest::reviewsArrived);
 }
 
-QVector<AbstractResource*> KNSBackendTest::getResources(ResultsStream* stream)
+QVector<AbstractResource*> KNSBackendTest::getResources(ResultsStream* stream, bool canBeEmpty)
 {
     Q_ASSERT(stream);
     Q_ASSERT(stream->objectName() != QLatin1String("KNS-void"));
     QSignalSpy spyResources(stream, &ResultsStream::destroyed);
     QVector<AbstractResource*> resources;
-    connect(stream, &ResultsStream::resourcesFound, this, [&resources](const QVector<AbstractResource*>& res) { resources += res; });
+    connect(stream, &ResultsStream::resourcesFound, this, [&resources, stream](const QVector<AbstractResource*>& res) {
+        resources += res;
+        stream->fetchMore();
+    });
     Q_ASSERT(spyResources.wait(10000));
-    Q_ASSERT(!resources.isEmpty());
+    Q_ASSERT(!resources.isEmpty() || canBeEmpty);
     return resources;
 }
 
@@ -83,6 +85,9 @@ void KNSBackendTest::testRetrieval()
 {
     QVERIFY(m_backend->backendUpdater());
     QCOMPARE(m_backend->updatesCount(), m_backend->backendUpdater()->toUpdate().count());
+
+    QSignalSpy spy(m_backend, &AbstractResourcesBackend::fetchingChanged);
+    QVERIFY(!m_backend->isFetching() || spy.wait());
 
     const auto resources = getAllResources(m_backend);
     foreach(AbstractResource* res, resources) {
@@ -133,17 +138,12 @@ void KNSBackendTest::reviewsArrived(AbstractResource* r, const QVector<ReviewPtr
 
 void KNSBackendTest::testResourceByUrl()
 {
-    const QUrl url(QStringLiteral("kns://") + m_backend->name() + QStringLiteral("/api.kde-look.org/1136471"));
-
-    auto resources = getResources(m_backend->findResourceByPackageName(url));
+    AbstractResourcesBackend::Filters f;
+    f.resourceUrl = QUrl(QStringLiteral("kns://") + m_backend->name() + QStringLiteral("/api.kde-look.org/1136471"));
+    const QVector<AbstractResource*> resources = getResources(m_backend->search(f));
     const QVector<QUrl> res = kTransform<QVector<QUrl>>(resources, [](AbstractResource* res){ return res->url(); });
     QCOMPARE(res.count(), 1);
-    QCOMPARE(url, res.constFirst());
-
-    AbstractResourcesBackend::Filters f;
-    f.resourceUrl = url;
-    const QVector<QUrl> res2 = kTransform<QVector<QUrl>>(getResources(m_backend->search(f)), [](AbstractResource* res){ return res->url(); });
-    QCOMPARE(res, res2);
+    QCOMPARE(f.resourceUrl, res.constFirst());
 
     auto resource = resources.constFirst();
     QVERIFY(!resource->isInstalled()); //Make sure .qttest is clean before running the test
@@ -156,4 +156,14 @@ void KNSBackendTest::testResourceByUrl()
     QVERIFY(spy.wait());
     QCOMPARE(spy.count(), 2);
     QVERIFY(!resource->isInstalled());
+}
+
+void KNSBackendTest::testResourceByUrlResourcesModel()
+{
+    AbstractResourcesBackend::Filters filter;
+    filter.resourceUrl = QUrl(QStringLiteral("kns://plasmoids.knsrc/store.kde.org/1169537")); //Wrong domain
+
+    auto resources = getResources(ResourcesModel::global()->search(filter), true);
+    const QVector<QUrl> res = kTransform<QVector<QUrl>>(resources, [](AbstractResource* res){ return res->url(); });
+    QCOMPARE(res.count(), 0);
 }

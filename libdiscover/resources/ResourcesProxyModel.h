@@ -22,8 +22,8 @@
 #ifndef RESOURCESPROXYMODEL_H
 #define RESOURCESPROXYMODEL_H
 
-#include <QtCore/QSortFilterProxyModel>
-#include <QtCore/QString>
+#include <QSortFilterProxyModel>
+#include <QString>
 #include <QStringList>
 #include <QQmlParserStatus>
 
@@ -45,6 +45,7 @@ class DISCOVERCOMMON_EXPORT ResourcesProxyModel : public QAbstractListModel, pub
     Q_PROPERTY(Category* filteredCategory READ filteredCategory WRITE setFiltersFromCategory NOTIFY categoryChanged)
     Q_PROPERTY(QString originFilter READ originFilter WRITE setOriginFilter)
     Q_PROPERTY(AbstractResource::State stateFilter READ stateFilter WRITE setStateFilter NOTIFY stateFilterChanged)
+    Q_PROPERTY(bool filterMinimumState READ filterMinimumState WRITE setFilterMinimumState NOTIFY filterMinimumStateChanged)
     Q_PROPERTY(QString mimeTypeFilter READ mimeTypeFilter WRITE setMimeTypeFilter)
     Q_PROPERTY(QString search READ lastSearch WRITE setSearch NOTIFY searchChanged)
     Q_PROPERTY(QUrl resourcesUrl READ resourcesUrl WRITE setResourcesUrl NOTIFY resourcesUrlChanged)
@@ -52,6 +53,8 @@ class DISCOVERCOMMON_EXPORT ResourcesProxyModel : public QAbstractListModel, pub
     Q_PROPERTY(bool allBackends READ allBackends WRITE setAllBackends)
     Q_PROPERTY(QVariantList subcategories READ subcategories NOTIFY subcategoriesChanged)
     Q_PROPERTY(bool isBusy READ isBusy NOTIFY busyChanged)
+    Q_PROPERTY(int count READ rowCount NOTIFY countChanged)
+    Q_PROPERTY(bool sortByRelevancy READ sortByRelevancy NOTIFY sortByRelevancyChanged)
 public:
     explicit ResourcesProxyModel(QObject* parent = nullptr);
     enum Roles {
@@ -75,7 +78,9 @@ public:
         SectionRole,
         MimeTypes,
         SizeRole,
-        LongDescriptionRole
+        LongDescriptionRole,
+        SourceIconRole,
+        ReleaseDateRole
     };
     Q_ENUM(Roles)
 
@@ -92,6 +97,8 @@ public:
     Roles sortRole() const { return m_sortRole; }
     void setSortOrder(Qt::SortOrder sortOrder);
     Qt::SortOrder sortOrder() const { return m_sortOrder; }
+    void setFilterMinimumState(bool filterMinimumState);
+    bool filterMinimumState() const;
 
     Category* filteredCategory() const;
     
@@ -120,6 +127,10 @@ public:
     bool lessThan(AbstractResource* rl, AbstractResource* rr) const;
     Q_SCRIPTABLE void invalidateFilter();
     void invalidateSorting();
+
+    bool canFetchMore(const QModelIndex & parent) const override;
+    void fetchMore(const QModelIndex & parent) override;
+    bool sortByRelevancy() const;
 
     void classBegin() override {}
     void componentComplete() override;
@@ -160,6 +171,9 @@ Q_SIGNALS:
     void searchChanged(const QString &search);
     void subcategoriesChanged(const QVariantList &subcategories);
     void resourcesUrlChanged(const QUrl &url);
+    void countChanged();
+    void filterMinimumStateChanged(bool filterMinimumState);
+    void sortByRelevancyChanged(bool sortByRelevancy);
 };
 
 #endif

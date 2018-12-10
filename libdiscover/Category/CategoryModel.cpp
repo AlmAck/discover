@@ -22,7 +22,7 @@
 #include "CategoryModel.h"
 #include "Category.h"
 #include "CategoriesReader.h"
-#include <QDebug>
+#include "libdiscover_debug.h"
 #include <QCollator>
 #include <utils.h>
 #include <resources/ResourcesModel.h>
@@ -30,7 +30,11 @@
 CategoryModel::CategoryModel(QObject* parent)
     : QObject(parent)
 {
-    connect(ResourcesModel::global(), &ResourcesModel::backendsChanged, this, &CategoryModel::populateCategories);
+    QTimer* t = new QTimer(this);
+    t->setInterval(0);
+    t->setSingleShot(true);
+    connect(t, &QTimer::timeout, this, &CategoryModel::populateCategories);
+    connect(ResourcesModel::global(), &ResourcesModel::backendsChanged, t, QOverload<>::of(&QTimer::start));
 }
 
 CategoryModel * CategoryModel::global()
@@ -49,6 +53,9 @@ void CategoryModel::populateCategories()
     QVector<Category*> ret;
     CategoriesReader cr;
     Q_FOREACH (const auto backend, backends) {
+        if (!backend->isValid())
+            continue;
+
         const QVector<Category*> cats = cr.loadCategoriesFile(backend);
 
         if(ret.isEmpty()) {
@@ -71,7 +78,10 @@ QVariantList CategoryModel::rootCategoriesVL() const
 
 void CategoryModel::blacklistPlugin(const QString &name)
 {
-    Category::blacklistPluginsInVector({name}, m_rootCategories);
+    const bool ret = Category::blacklistPluginsInVector({name}, m_rootCategories);
+    if (ret) {
+        Q_EMIT rootCategoriesChanged();
+    }
 }
 
 static Category* recFindCategory(Category* root, const QString& name)

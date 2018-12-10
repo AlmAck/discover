@@ -23,6 +23,7 @@
 #include <KAboutData>
 #include <KCrash>
 #include <KDBusService>
+#include <KQuickAddons/QtQuickSettings>
 #include <KLocalizedString>
 #include <QCommandLineParser>
 #include <qwindow.h>
@@ -50,6 +51,7 @@ QCommandLineParser* createParser()
     parser->addOption(QCommandLineOption(QStringLiteral("compact"), i18n("Compact Mode (auto/compact/full)."), QStringLiteral("mode"), QStringLiteral("auto")));
     parser->addOption(QCommandLineOption(QStringLiteral("local-filename"), i18n("Local package file to install"), QStringLiteral("package")));
     parser->addOption(QCommandLineOption(QStringLiteral("listbackends"), i18n("List all the available backends.")));
+    parser->addOption(QCommandLineOption(QStringLiteral("search"), i18n("Search string."), QStringLiteral("text")));
     parser->addOption(QCommandLineOption(QStringLiteral("test"), QStringLiteral("Test file"), QStringLiteral("file.qml")));
     parser->addPositionalArgument(QStringLiteral("urls"), i18n("Supports appstream: url scheme"));
     DiscoverBackendsFactory::setupCommandLine(parser);
@@ -71,6 +73,9 @@ void processArgs(QCommandLineParser* parser, DiscoverObject* mainWindow)
     if(parser->isSet(QStringLiteral("mode")))
         mainWindow->openMode(parser->value(QStringLiteral("mode")));
 
+    if(parser->isSet(QStringLiteral("search")))
+        mainWindow->openSearch(parser->value(QStringLiteral("search")));
+
     if(parser->isSet(QStringLiteral("local-filename")))
         mainWindow->openLocalPackage(QUrl::fromUserInput(parser->value(QStringLiteral("local-filename")), {}, QUrl::AssumeLocalFile));
 
@@ -79,7 +84,7 @@ void processArgs(QCommandLineParser* parser, DiscoverObject* mainWindow)
         if (url.isLocalFile())
             mainWindow->openLocalPackage(url);
         else if (url.scheme() == QLatin1String("apt"))
-            mainWindow->openSearch(url.host());
+            Q_EMIT mainWindow->openSearch(url.host());
         else
             mainWindow->openApplication(url);
     }
@@ -92,12 +97,19 @@ int main(int argc, char** argv)
     app.setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
     app.setAttribute(Qt::AA_UseHighDpiPixmaps, true);
     KCrash::initialize();
+    KQuickAddons::QtQuickSettings::init();
     KLocalizedString::setApplicationDomain("plasma-discover");
     KAboutData about(QStringLiteral("discover"), i18n("Discover"), version, i18n("An application explorer"),
                      KAboutLicense::GPL, i18n("© 2010-2018 Plasma Development Team"));
-    about.addAuthor(i18n("Aleix Pol Gonzalez"), QString(), QStringLiteral("aleixpol@blue-systems.com"));
+    about.addAuthor(i18n("Aleix Pol Gonzalez"), QString(), QStringLiteral("aleixpol@kde.org"));
     about.addAuthor(i18n("Jonathan Thomas"), QString(), QStringLiteral("echidnaman@kubuntu.org"));
     about.setProductName("discover/discover");
+    about.setProgramLogo(app.windowIcon());
+
+    about.setTranslator(
+            i18ndc(nullptr, "NAME OF TRANSLATORS", "Your names"),
+            i18ndc(nullptr, "EMAIL OF TRANSLATORS", "Your emails"));
+
     KAboutData::setApplicationData(about);
 
     DiscoverObject *mainWindow = nullptr;

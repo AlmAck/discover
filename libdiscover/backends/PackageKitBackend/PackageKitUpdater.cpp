@@ -21,21 +21,23 @@
 #include "PackageKitMessages.h"
 
 #include <PackageKit/Daemon>
-#ifdef PKQT_1_0
 #include <PackageKit/Offline>
-#endif
 #include <QDebug>
 #include <QAction>
 #include <QSet>
 
+#include <KSharedConfig>
+#include <KConfigGroup>
 #include <KLocalizedString>
 
-static int percentageWithStatus(PackageKit::Transaction::Status status, uint percentage)
+int percentageWithStatus(PackageKit::Transaction::Status status, uint percentage)
 {
+    const auto was = percentage;
     if (status != PackageKit::Transaction::StatusUnknown) {
         static const QMap<PackageKit::Transaction::Status, int> statuses = {
             { PackageKit::Transaction::Status::StatusDownload, 0 },
             { PackageKit::Transaction::Status::StatusInstall, 1},
+            { PackageKit::Transaction::Status::StatusRemove, 1},
             { PackageKit::Transaction::Status::StatusUpdate, 1}
         };
         const auto idx = statuses.value(status, -1);
@@ -45,7 +47,7 @@ static int percentageWithStatus(PackageKit::Transaction::Status status, uint per
         }
         percentage = (idx * 100 + percentage) / 2 /*the maximum in statuses*/;
     }
-    qDebug() << "reporing progress with status:" << status << percentage;
+    qDebug() << "reporting progress with status:" << status << percentage << was;
     return percentage;
 }
 
@@ -67,6 +69,13 @@ PackageKitUpdater::~PackageKitUpdater()
 
 void PackageKitUpdater::prepare()
 {
+    if (PackageKit::Daemon::global()->offline()->updateTriggered()) {
+        m_toUpgrade.clear();
+        m_allUpgradeable.clear();
+        enableNeedsReboot();
+        return;
+    }
+
     Q_ASSERT(!m_transaction);
     m_toUpgrade = m_backend->upgradeablePackages();
     m_allUpgradeable = m_toUpgrade;
@@ -74,8 +83,10 @@ void PackageKitUpdater::prepare()
 
 void PackageKitUpdater::setupTransaction(PackageKit::Transaction::TransactionFlags flags)
 {
-    m_packagesRemoved.clear();
-    m_transaction = PackageKit::Daemon::updatePackages(involvedPackages(m_toUpgrade).toList(), flags);
+    m_packagesModified.clear();
+    auto pkgs = involvedPackages(m_toUpgrade).toList();
+    pkgs.sort();
+    m_transaction = PackageKit::Daemon::updatePackages(pkgs, flags);
     m_isCancelable = m_transaction->allowCancel();
 
     connect(m_transaction.data(), &PackageKit::Transaction::finished, this, &PackageKitUpdater::finished);
@@ -88,6 +99,9 @@ void PackageKitUpdater::setupTransaction(PackageKit::Transaction::TransactionFla
     connect(m_transaction.data(), &PackageKit::Transaction::allowCancelChanged, this, &PackageKitUpdater::cancellableChanged);
     connect(m_transaction.data(), &PackageKit::Transaction::percentageChanged, this, &PackageKitUpdater::percentageChanged);
     connect(m_transaction.data(), &PackageKit::Transaction::itemProgress, this, &PackageKitUpdater::itemProgress);
+    connect(m_transaction.data(), &PackageKit::Transaction::speedChanged, this, [this] {
+        Q_EMIT downloadSpeedChanged(downloadSpeed());
+    });
 }
 
 QSet<AbstractResource*> PackageKitUpdater::packagesForPackageId(const QSet<QString>& pkgids) const
@@ -116,6 +130,12 @@ QSet<QString> PackageKitUpdater::involvedPackages(const QSet<AbstractResource*>&
     foreach (AbstractResource * res, packages) {
         PackageKitResource * app = qobject_cast<PackageKitResource*>(res);
         QString pkgid = m_backend->upgradeablePackageId(app);
+
+        if (pkgid.isEmpty()) {
+            qWarning() << "no upgradeablePackageId for" << app;
+            continue;
+        }
+
         packageIds.insert(pkgid);
     }
     return packageIds;
@@ -143,12 +163,27 @@ void PackageKitUpdater::proceed()
 {
     if (!m_proceedFunctions.isEmpty())
         processProceedFunction();
-#ifdef PKQT_1_0
-    else if (qEnvironmentVariableIsSet("PK_OFFLINE_UPDATE"))
+    else if (useOfflineUpdates())
         setupTransaction(PackageKit::Transaction::TransactionFlagOnlyTrusted | PackageKit::Transaction::TransactionFlagOnlyDownload);
-#endif
     else
         setupTransaction(PackageKit::Transaction::TransactionFlagOnlyTrusted);
+}
+
+bool PackageKitUpdater::useOfflineUpdates() const
+{
+    if (qEnvironmentVariableIsSet("PK_OFFLINE_UPDATE"))
+        return true;
+    KConfigGroup group(KSharedConfig::openConfig(), "Software");
+    return group.readEntry<bool>("UseOfflineUpdates", false);
+}
+
+void PackageKitUpdater::setUseOfflineUpdates(bool use)
+{
+//     To enable from command line use:
+//     kwriteconfig5 --file discoverrc --group Software --key UseOfflineUpdates true
+
+    KConfigGroup group(KSharedConfig::openConfig(), "Software");
+    group.writeEntry<bool>("UseOfflineUpdates", use);
 }
 
 void PackageKitUpdater::start()
@@ -171,24 +206,27 @@ void PackageKitUpdater::finished(PackageKit::Transaction::Exit exit, uint /*time
     m_transaction = nullptr;
 
     if (!cancel && simulate) {
-        if (!m_packagesRemoved.isEmpty())
-            Q_EMIT proceedRequest(i18n("Packages to remove"), i18n("The following packages will be removed by the update:\n<ul><li>%1</li></ul>", PackageKitResource::joinPackages(m_packagesRemoved, QStringLiteral("</li><li>"))));
-        else {
+        const auto toremove = m_packagesModified.value(PackageKit::Transaction::InfoRemoving);
+        if (!toremove.isEmpty()) {
+            const auto toinstall = QStringList() << m_packagesModified.value(PackageKit::Transaction::InfoInstalling) << m_packagesModified.value(PackageKit::Transaction::InfoUpdating);
+            Q_EMIT proceedRequest(i18n("Packages to remove"), i18n("The following packages will be removed by the update:\n<ul><li>%1</li></ul>\nin order to install:\n<ul><li>%2</li></ul>",
+                                                                   PackageKitResource::joinPackages(toremove, QStringLiteral("</li><li>"), {}),
+                                                                   PackageKitResource::joinPackages(toinstall, QStringLiteral("</li><li>"), {})
+                                                                  ));
+        } else {
             proceed();
         }
         return;
     }
 
     setProgressing(false);
-    m_backend->refreshDatabase();
+    m_backend->fetchUpdates();
     fetchLastUpdateTime();
 
-    if (qEnvironmentVariableIsSet("PK_OFFLINE_UPDATE"))
-#ifdef PKQT_1_0
+    if (useOfflineUpdates()) {
         PackageKit::Daemon::global()->offline()->trigger(PackageKit::Offline::ActionReboot);
-#else
-        qWarning() << "PK_OFFLINE_UPDATE is set but discover was built against an old version of PackageKitQt that didn't support offline updates";
-#endif
+        Q_EMIT passiveMessage(i18n("Please restart the computer to finish the update"));
+    }
 }
 
 void PackageKitUpdater::cancellableChanged()
@@ -356,8 +394,7 @@ void PackageKitUpdater::updateDetail(const QString& packageID, const QStringList
 
 void PackageKitUpdater::packageResolved(PackageKit::Transaction::Info info, const QString& packageId)
 {
-    if (info == PackageKit::Transaction::InfoRemoving)
-        m_packagesRemoved << packageId;
+    m_packagesModified[info] << packageId;
 }
 
 void PackageKitUpdater::repoSignatureRequired(const QString& packageID, const QString& repoName, const QString& keyUrl,
@@ -386,4 +423,9 @@ double PackageKitUpdater::updateSize() const
         }
     }
     return ret;
+}
+
+quint64 PackageKitUpdater::downloadSpeed() const
+{
+    return m_transaction ? m_transaction->speed() : 0;
 }

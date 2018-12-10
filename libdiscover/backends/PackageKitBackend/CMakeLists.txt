@@ -13,11 +13,16 @@ add_library(packagekit-backend MODULE PackageKitBackend.cpp
     PackageKitSourcesBackend.cpp
     LocalFilePKResource.cpp
     TransactionSet.cpp
+    pkui.qrc
 )
 
 target_link_libraries(packagekit-backend PRIVATE Discover::Common Qt5::Core PK::packagekitqt5 KF5::ConfigGui KF5::KIOCore KF5::Archive AppStreamQt)
-
 install(TARGETS packagekit-backend DESTINATION ${PLUGIN_INSTALL_DIR}/discover)
+
+if(TARGET PkgConfig::Markdown)
+    target_compile_definitions(packagekit-backend PRIVATE -DWITH_MARKDOWN)
+    target_link_libraries(packagekit-backend PRIVATE PkgConfig::Markdown)
+endif()
 
 #notifier
 add_library(DiscoverPackageKitNotifier MODULE PackageKitNotifier.cpp)
@@ -28,10 +33,5 @@ install(TARGETS DiscoverPackageKitNotifier DESTINATION ${PLUGIN_INSTALL_DIR}/dis
 
 install(FILES packagekit-backend-categories.xml DESTINATION ${DATA_INSTALL_DIR}/libdiscover/categories)
 add_subdirectory(categoryimages)
-
-if(packagekitqt5_VERSION VERSION_GREATER 1.0.1)
-    target_compile_definitions(packagekit-backend PUBLIC -DPKQT_1_0)
-    target_compile_definitions(DiscoverPackageKitNotifier PUBLIC -DPKQT_1_0)
-endif()
 
 install( FILES org.kde.discover.packagekit.appdata.xml DESTINATION ${KDE_INSTALL_METAINFODIR} )

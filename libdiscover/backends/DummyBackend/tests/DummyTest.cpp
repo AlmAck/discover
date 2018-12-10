@@ -81,7 +81,7 @@ void DummyTest::testReadData()
 {
     const auto resources = fetchResources(m_appBackend->search({}));
 
-    QCOMPARE(m_appBackend->property("startElements").toInt()*2, resources.size());
+    QCOMPARE(m_appBackend->property("startElements").toInt(), resources.size());
     QBENCHMARK {
         for(AbstractResource* res: resources) {
             QVERIFY(!res->name().isEmpty());
@@ -102,18 +102,18 @@ void DummyTest::testProxy()
     QVERIFY(spy.wait());
     QVERIFY(!pm.isBusy());
 
-    QCOMPARE(m_appBackend->property("startElements").toInt()*2, pm.rowCount());
+    QCOMPARE(m_appBackend->property("startElements").toInt(), pm.rowCount());
     pm.setSearch(QStringLiteral("techie"));
     QVERIFY(pm.isBusy());
     QVERIFY(spy.wait());
     QVERIFY(!pm.isBusy());
-    QCOMPARE(m_appBackend->property("startElements").toInt(), pm.rowCount());
+    QCOMPARE(0, pm.rowCount());
     QCOMPARE(pm.subcategories().count(), 7);
     pm.setSearch(QString());
     QVERIFY(pm.isBusy());
     QVERIFY(spy.wait());
     QVERIFY(!pm.isBusy());
-    QCOMPARE(m_appBackend->property("startElements").toInt()*2, pm.rowCount());
+    QCOMPARE(m_appBackend->property("startElements").toInt(), pm.rowCount());
 }
 
 void DummyTest::testProxySorting()
@@ -131,7 +131,7 @@ void DummyTest::testProxySorting()
     QVERIFY(spy.wait());
     QVERIFY(!pm.isBusy());
 
-    QCOMPARE(m_appBackend->property("startElements").toInt()*2, pm.rowCount());
+    QCOMPARE(m_appBackend->property("startElements").toInt(), pm.rowCount());
     QVariant lastRatingCount;
     for(int i=0, rc=pm.rowCount(); i<rc; ++i) {
         const QModelIndex mi = pm.index(i, 0);
@@ -145,14 +145,14 @@ void DummyTest::testProxySorting()
 void DummyTest::testFetch()
 {
     const auto resources = fetchResources(m_appBackend->search({}));
-    QCOMPARE(m_appBackend->property("startElements").toInt()*2, resources.count());
+    QCOMPARE(m_appBackend->property("startElements").toInt(), resources.count());
 
     //fetches updates, adds new things
     m_appBackend->checkForUpdates();
     QSignalSpy spy(m_model, SIGNAL(allInitialized()));
     QVERIFY(spy.wait(80000));
     auto resources2 = fetchResources(m_appBackend->search({}));
-    QCOMPARE(m_appBackend->property("startElements").toInt()*4, resources2.count());
+    QCOMPARE(m_appBackend->property("startElements").toInt()*2, resources2.count());
 }
 
 void DummyTest::testSort()
@@ -187,7 +187,10 @@ void DummyTest::testSort()
 
 void DummyTest::testInstallAddons()
 {
-    const auto resources = fetchResources(m_appBackend->findResourceByPackageName(QUrl(QStringLiteral("dummy://Dummy.1"))));
+    AbstractResourcesBackend::Filters filter;
+    filter.resourceUrl = QUrl(QStringLiteral("dummy://Dummy.1"));
+
+    const auto resources = fetchResources(m_appBackend->search(filter));
     QCOMPARE(resources.count(), 1);
     AbstractResource* res = resources.first();
     QVERIFY(res);
@@ -224,7 +227,10 @@ void DummyTest::testInstallAddons()
 
 void DummyTest::testReviewsModel()
 {
-    const auto resources = fetchResources(m_appBackend->findResourceByPackageName(QUrl(QStringLiteral("dummy://Dummy.1"))));
+    AbstractResourcesBackend::Filters filter;
+    filter.resourceUrl = QUrl(QStringLiteral("dummy://Dummy.1"));
+
+    const auto resources = fetchResources(m_appBackend->search(filter));
     QCOMPARE(resources.count(), 1);
     AbstractResource* res = resources.first();
     QVERIFY(res);
@@ -242,7 +248,7 @@ void DummyTest::testReviewsModel()
     m.markUseful(0, false);
     QCOMPARE(ReviewsModel::UserChoice(m.data(m.index(0,0), ReviewsModel::UsefulChoice).toInt()), ReviewsModel::No);
 
-    const auto resources2 = fetchResources(m_appBackend->findResourceByPackageName(QUrl(QStringLiteral("dummy://Dummy.1"))));
+    const auto resources2 = fetchResources(m_appBackend->search(filter));
     QCOMPARE(resources2.count(), 1);
     res = resources2.first();
     m.setResource(res);
@@ -268,10 +274,13 @@ void DummyTest::testUpdateModel()
 
 void DummyTest::testScreenshotsModel()
 {
+    AbstractResourcesBackend::Filters filter;
+    filter.resourceUrl = QUrl(QStringLiteral("dummy://Dummy.1"));
+
     ScreenshotsModel m;
     new ModelTest(&m, &m);
 
-    const auto resources = fetchResources(m_appBackend->findResourceByPackageName(QUrl(QStringLiteral("dummy://Dummy.1"))));
+    const auto resources = fetchResources(m_appBackend->search(filter));
     QCOMPARE(resources.count(), 1);
     AbstractResource* res = resources.first();
     QVERIFY(res);

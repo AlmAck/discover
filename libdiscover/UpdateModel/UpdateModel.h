@@ -24,6 +24,7 @@
 #include <QAbstractListModel>
 #include "discovercommon_export.h"
 
+class QTimer;
 class ResourcesUpdatesModel;
 class AbstractResource;
 class UpdateItem;
@@ -43,9 +44,11 @@ public:
         SizeRole,
         ResourceRole,
         ResourceProgressRole,
+        SectionResourceProgressRole,
         ChangelogRole,
         SectionRole
     };
+    Q_ENUM(Roles)
 
     explicit UpdateModel(QObject *parent = nullptr);
     ~UpdateModel() override;
@@ -64,18 +67,21 @@ public:
     bool hasUpdates() const;
 
     ///all upgradeable packages
-    int totalUpdatesCount() const { return m_updateItems.count(); }
+    int totalUpdatesCount() const;
 
     ///packages marked to upgrade
     int toUpdateCount() const;
 
-    Q_SCRIPTABLE void fetchChangelog(int row);
+    Q_SCRIPTABLE void fetchUpdateDetails(int row);
 
     QString updateSize() const;
 
     ResourcesUpdatesModel* backend() const;
 
 public Q_SLOTS:
+    void checkAll();
+    void uncheckAll();
+
     void setBackend(ResourcesUpdatesModel* updates);
 
 Q_SIGNALS:
@@ -91,8 +97,10 @@ private:
     void resourceHasProgressed(AbstractResource* res, qreal progress);
     void activityChanged();
 
+    QTimer* const m_updateSizeTimer;
     QVector<UpdateItem*> m_updateItems;
     ResourcesUpdatesModel* m_updates;
+    QList<AbstractResource*> m_resources;
 };
 
 #endif // UPDATEMODEL_H

@@ -1,5 +1,6 @@
 /***************************************************************************
- *   Copyright © 2013 Lukas Appelhans <l.appelhans@gmx.de>                 *
+ *   Copyright © 2013 Aleix Pol Gonzalez <aleixpol@blue-systems.com>       *
+ *   Copyright © 2017 Jan Grulich <jgrulich@redhat.com>                    *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or         *
  *   modify it under the terms of the GNU General Public License as        *
@@ -17,24 +18,41 @@
  *   You should have received a copy of the GNU General Public License     *
  *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
-#ifndef SNAPNOTIFIER_H
-#define SNAPNOTIFIER_H
 
-#include <BackendNotifierModule.h>
+#ifndef FLATPAKJOBTRANSACTION_H
+#define FLATPAKJOBTRANSACTION_H
 
-class SnapNotifier : public BackendNotifierModule
+#include <Transaction/Transaction.h>
+#include <QPointer>
+
+extern "C" {
+#include <flatpak.h>
+#include <gio/gio.h>
+#include <glib.h>
+}
+
+class FlatpakResource;
+class FlatpakTransactionThread;
+class FlatpakJobTransaction : public Transaction
 {
 Q_OBJECT
-Q_PLUGIN_METADATA(IID "org.kde.discover.BackendNotifierModule")
-Q_INTERFACES(BackendNotifierModule)
 public:
-    explicit SnapNotifier(QObject* parent = nullptr);
-    ~SnapNotifier() override;
+    FlatpakJobTransaction(FlatpakResource *app, Role role, bool delayStart = false);
 
-    bool isSystemUpToDate() const override;
-    void recheckSystemUpdateNeeded() override;
-    uint securityUpdatesCount() override;
-    uint updatesCount() override;
+    ~FlatpakJobTransaction();
+
+    void cancel() override;
+
+public Q_SLOTS:
+    void onJobProgressChanged(int progress);
+    void finishTransaction();
+    void start();
+
+private:
+    void updateProgress();
+
+    QPointer<FlatpakResource> m_app;
+    QPointer<FlatpakTransactionThread> m_appJob;
 };
 
-#endif
+#endif // FLATPAKJOBTRANSACTION_H

@@ -29,8 +29,10 @@
 #include <QDebug>
 #include <KNotification>
 #include <PackageKit/Daemon>
+#include <PackageKit/Offline>
 #include <QDBusInterface>
 #include <QFile>
+#include <QFileSystemWatcher>
 #include <KLocalizedString>
 #include <KDesktopFile>
 #include <KConfigGroup>
@@ -49,34 +51,51 @@ PackageKitNotifier::PackageKitNotifier(QObject* parent)
     connect(PackageKit::Daemon::global(), &PackageKit::Daemon::updatesChanged, this, &PackageKitNotifier::recheckSystemUpdateNeeded);
     connect(PackageKit::Daemon::global(), &PackageKit::Daemon::isRunningChanged, this, &PackageKitNotifier::recheckSystemUpdateNeeded);
     connect(PackageKit::Daemon::global(), &PackageKit::Daemon::transactionListChanged, this, &PackageKitNotifier::transactionListChanged);
+    connect(PackageKit::Daemon::global(), &PackageKit::Daemon::restartScheduled, this, &PackageKitNotifier::nowNeedsReboot);
+    connect(PackageKit::Daemon::global(), &PackageKit::Daemon::changed, this, [this]{
+        if (PackageKit::Daemon::global()->offline()->updateTriggered())
+            nowNeedsReboot();
+    });
 
     //Check if there's packages after 5'
     QTimer::singleShot(5 * 60 * 1000, this, &PackageKitNotifier::refreshDatabase);
 
     QTimer *regularCheck = new QTimer(this);
-    regularCheck->setInterval(24 * 60 * 60 * 1000); //refresh at least once every day
     connect(regularCheck, &QTimer::timeout, this, &PackageKitNotifier::refreshDatabase);
 
     const QString aptconfig = QStandardPaths::findExecutable(QStringLiteral("apt-config"));
     if (!aptconfig.isEmpty()) {
-        auto process = checkAptVariable(aptconfig, QLatin1String("Apt::Periodic::Update-Package-Lists"), [regularCheck](const QStringRef& value) {
+        checkAptVariable(aptconfig, QLatin1String("Apt::Periodic::Update-Package-Lists"), [regularCheck](const QStringRef& value) {
             bool ok;
             int time = value.toInt(&ok);
-            if (ok && time > 0)
+            if (ok && time > 0) {
                 regularCheck->setInterval(time * 60 * 60 * 1000);
-            else
+            } else {
+                regularCheck->setInterval(24 * 60 * 60 * 1000); //refresh at least once every day
                 qWarning() << "couldn't understand value for timer:" << value;
+            }
+            regularCheck->start();
         });
-        connect(process, static_cast<void(QProcess::*)(int)>(&QProcess::finished), regularCheck, static_cast<void(QTimer::*)()>(&QTimer::start));
-    } else
+    } else {
+        regularCheck->setInterval(24 * 60 * 60 * 1000); //refresh at least once every day
         regularCheck->start();
+    }
 
-	QTimer::singleShot(3000, this, &PackageKitNotifier::checkOfflineUpdates);
+    QTimer::singleShot(3000, this, &PackageKitNotifier::checkOfflineUpdates);
 
     m_recheckTimer = new QTimer(this);
     m_recheckTimer->setInterval(200);
     m_recheckTimer->setSingleShot(true);
     connect(m_recheckTimer, &QTimer::timeout, this, &PackageKitNotifier::recheckSystemUpdate);
+
+    QFileSystemWatcher* watcher = new QFileSystemWatcher(this);
+    watcher->addPath(QStringLiteral(PK_OFFLINE_ACTION_FILENAME));
+    connect(watcher, &QFileSystemWatcher::fileChanged, this, &PackageKitNotifier::nowNeedsReboot);
+
+    QTimer::singleShot(100, this, [this](){
+    if (QFile::exists(QStringLiteral(PK_OFFLINE_ACTION_FILENAME)))
+        nowNeedsReboot();
+    });
 }
 
 PackageKitNotifier::~PackageKitNotifier()
@@ -127,6 +146,9 @@ void PackageKitNotifier::checkOfflineUpdates()
 
 void PackageKitNotifier::recheckSystemUpdateNeeded()
 {
+    if (PackageKit::Daemon::global()->offline()->updateTriggered())
+        return;
+
     m_recheckTimer->start();
 }
 
@@ -189,46 +211,26 @@ uint PackageKitNotifier::updatesCount()
     return m_normalUpdates;
 }
 
-void PackageKitNotifier::onDistroUpgrade(PackageKit::Transaction::DistroUpgrade type, const QString& name, const QString& description)
+void PackageKitNotifier::onDistroUpgrade(PackageKit::Transaction::DistroUpgrade /*type*/, const QString& name, const QString& description)
 {
-#ifdef PKQT_1_0
-    KNotification *notification = new KNotification(QLatin1String("distupgrade-notification"), KNotification::Persistent | KNotification::DefaultEvent);
-    notification->setIconName(QStringLiteral("system-software-update"));
-    notification->setActions(QStringList{QLatin1String("Upgrade")});
-    notification->setTitle(i18n("Upgrade available"));
-    switch(type) {
-        case PackageKit::Transaction::DistroUpgradeUnknown:
-        case PackageKit::Transaction::DistroUpgradeUnstable:
-            notification->setText(i18n("New unstable version: %1", description));
-            break;
-        case PackageKit::Transaction::DistroUpgradeStable:
-            notification->setText(i18n("New version: %1", description));
-            break;
-    }
-
-    connect(notification, &KNotification::action1Activated, this, [name] () {
+    auto a = new UpgradeAction(name, description, this);
+    connect(a, &UpgradeAction::triggered, this, [] (const QString &name) {
         PackageKit::Daemon::upgradeSystem(name, PackageKit::Transaction::UpgradeKindDefault);
     });
-
-    notification->sendEvent();
-#endif
+    Q_EMIT foundUpgradeAction(a);
 }
 
 void PackageKitNotifier::refreshDatabase()
 {
     if (!m_refresher) {
         m_refresher = PackageKit::Daemon::refreshCache(false);
-        connect(m_refresher.data(), &PackageKit::Transaction::finished, this, [this]() {
-            recheckSystemUpdateNeeded();
-        });
+        connect(m_refresher.data(), &PackageKit::Transaction::finished, this, &PackageKitNotifier::recheckSystemUpdateNeeded);
     }
 
-#ifdef PKQT_1_0
     if (!m_distUpgrades && (PackageKit::Daemon::roles() & PackageKit::Transaction::RoleUpgradeSystem)) {
         m_distUpgrades = PackageKit::Daemon::getDistroUpgrades();
         connect(m_distUpgrades, &PackageKit::Transaction::distroUpgrade, this, &PackageKitNotifier::onDistroUpgrade);
     }
-#endif
 }
 
 QProcess* PackageKitNotifier::checkAptVariable(const QString &aptconfig, const QLatin1String& varname, std::function<void(const QStringRef& val)> func)
@@ -246,8 +248,10 @@ QProcess* PackageKitNotifier::checkAptVariable(const QString &aptconfig, const Q
             const auto match = rx.match(line);
             if (match.hasMatch()) {
                 func(match.capturedRef(1));
+                return;
             }
         }
+        func({});
     });
     connect(process, static_cast<void(QProcess::*)(int)>(&QProcess::finished), process, &QObject::deleteLater);
     return process;
@@ -255,6 +259,9 @@ QProcess* PackageKitNotifier::checkAptVariable(const QString &aptconfig, const Q
 
 void PackageKitNotifier::transactionListChanged(const QStringList& tids)
 {
+    if (PackageKit::Daemon::global()->offline()->updateTriggered())
+        return;
+
     for (const auto &tid: tids) {
         if (m_transactions.contains(tid))
             continue;
@@ -269,12 +276,24 @@ void PackageKitNotifier::transactionListChanged(const QStringList& tids)
         connect(t, &PackageKit::Transaction::requireRestart, this, &PackageKitNotifier::onRequireRestart);
         connect(t, &PackageKit::Transaction::finished, this, [this, t](){
             auto restart = t->property("requireRestart");
-            if (!restart.isNull())
-                requireRestartNotification(PackageKit::Transaction::Restart(restart.toInt()));
+            if (!restart.isNull()) {
+                auto restartEvent = PackageKit::Transaction::Restart(restart.toInt());
+                if (restartEvent >= PackageKit::Transaction::RestartSession) {
+                    nowNeedsReboot();
+                }
+            }
             m_transactions.remove(t->tid().path());
             t->deleteLater();
         });
         m_transactions.insert(tid, t);
+    }
+}
+
+void PackageKitNotifier::nowNeedsReboot()
+{
+    if (!m_needsReboot) {
+        m_needsReboot = true;
+        Q_EMIT needsRebootChanged();
     }
 }
 
@@ -283,34 +302,4 @@ void PackageKitNotifier::onRequireRestart(PackageKit::Transaction::Restart type,
     PackageKit::Transaction* t = qobject_cast<PackageKit::Transaction*>(sender());
     t->setProperty("requireRestart", qMax<int>(t->property("requireRestart").toInt(), type));
     qDebug() << "RESTART" << type << "is required for package" << packageID;
-}
-
-void PackageKitNotifier::requireRestartNotification(PackageKit::Transaction::Restart type)
-{
-    if (type < PackageKit::Transaction::RestartSession) {
-        return;
-    }
-
-    KNotification *notification = new KNotification(QLatin1String("notification"), KNotification::Persistent | KNotification::DefaultEvent);
-    notification->setIconName(QStringLiteral("system-software-update"));
-    if (type == PackageKit::Transaction::RestartSystem || type == PackageKit::Transaction::RestartSecuritySystem) {
-        notification->setActions(QStringList{QLatin1String("Restart")});
-        notification->setTitle(i18n("Restart is required"));
-        notification->setText(i18n("The system needs to be restarted for the updates to take effect."));
-    } else {
-        notification->setActions(QStringList{QLatin1String("Logout")});
-        notification->setTitle(i18n("Session restart is required"));
-        notification->setText(i18n("You will need to log out and back in for the update to take effect."));
-    }
-
-    connect(notification, &KNotification::action1Activated, this, [type] () {
-        QDBusInterface interface(QStringLiteral("org.kde.ksmserver"), QStringLiteral("/KSMServer"), QStringLiteral("org.kde.KSMServerInterface"), QDBusConnection::sessionBus());
-        if (type == PackageKit::Transaction::RestartSystem) {
-            interface.asyncCall(QStringLiteral("logout"), 0, 1, 2); // Options: do not ask again | reboot | force
-        } else {
-            interface.asyncCall(QStringLiteral("logout"), 0, 0, 2); // Options: do not ask again | logout | force
-        }
-    });
-
-    notification->sendEvent();
 }

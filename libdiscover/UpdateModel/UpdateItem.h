@@ -22,8 +22,8 @@
 #define UPDATEITEM_H
 
 // Qt includes
-#include <QtCore/QSet>
-#include <QtCore/QString>
+#include <QSet>
+#include <QString>
 #include "discovercommon_export.h"
 
 #include <QIcon>
@@ -36,9 +36,6 @@ public:
 
     ~UpdateItem();
 
-
-    void setSection(const QString &section) { m_section = section; }
-    QString section() const { return m_section; }
     void setProgress(qreal progress);
     qreal progress() const;
 
@@ -61,7 +58,6 @@ private:
     const QIcon m_categoryIcon;
     qreal m_progress;
     QString m_changelog;
-    QString m_section;
 };
 
 #endif // UPDATEITEM_H

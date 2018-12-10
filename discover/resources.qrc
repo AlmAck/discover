@@ -2,7 +2,6 @@
 <RCC version="1.0">
  <qresource>
     <file>qml/TopLevelPageData.qml</file>
-    <file>qml/CategoryDisplay.qml</file>
     <file>qml/ApplicationsListPage.qml</file>
     <file>qml/ApplicationPage.qml</file>
     <file>qml/ReviewsPage.qml</file>
@@ -16,18 +15,15 @@
     <file>qml/BrowsingPage.qml</file>
     <file>qml/InstalledPage.qml</file>
     <file>qml/SearchPage.qml</file>
-    <file>qml/Information.qml</file>
     <file>qml/SourcesPage.qml</file>
     <file>qml/ReviewDelegate.qml</file>
     <file>qml/AddSourceDialog.qml</file>
     <file>qml/ConditionalLoader.qml</file>
-    <file>qml/LinkButton.qml</file>
+    <file>qml/ConditionalObject.qml</file>
     <file>qml/ApplicationScreenshots.qml</file>
     <file>qml/LabelBackground.qml</file>
-    <file>qml/PageHeader.qml</file>
     <file>qml/ActionBridge.qml</file>
     <file>qml/KirigamiActionBridge.qml</file>
-    <file>qml/DiscoverSystemPalette.qml</file>
     <file>qml/DiscoverPage.qml</file>
     <file>qml/DiscoverWindow.qml</file>
     <file>qml/DiscoverDrawer.qml</file>
@@ -35,6 +31,8 @@
     <file>qml/LoadingPage.qml</file>
     <file>qml/SearchField.qml</file>
     <file>qml/Shadow.qml</file>
+    <file>qml/DiscoverPopup.qml</file>
+    <file>qml/AboutPage.qml</file>
 
     <file>qml/navigation.js</file>
  </qresource>

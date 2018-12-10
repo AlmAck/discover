@@ -29,12 +29,13 @@ set(discovercommon_SRCS
     resources/AbstractBackendUpdater.cpp
     resources/AbstractSourcesBackend.cpp
     resources/StoredResultsStream.cpp
-    CachedNetworkAccessManager.cpp
     ActionsModel.cpp
     DiscoverBackendsFactory.cpp
     ScreenshotsModel.cpp
     ApplicationAddonsModel.cpp
 )
+
+ecm_qt_declare_logging_category(discovercommon_SRCS HEADER libdiscover_debug.h IDENTIFIER LIBDISCOVER_LOG CATEGORY_NAME org.kde.plasma.libdiscover)
 
 if(AppStreamQt_FOUND)
     set(discovercommon_SRCS ${discovercommon_SRCS}
@@ -54,7 +55,6 @@ LINK_PUBLIC
     KF5::ItemModels
 LINK_PRIVATE
     Qt5::Xml
-    Qt5::DBus
     KF5::KIOCore
     KF5::CoreAddons
 )

@@ -30,7 +30,7 @@
 #include "Transaction/TransactionModel.h"
 #include "Category/CategoryModel.h"
 #include "utils.h"
-#include <QDebug>
+#include "libdiscover_debug.h"
 #include <QCoreApplication>
 #include <QThread>
 #include <QAction>
@@ -76,6 +76,8 @@ void ResourcesModel::init(bool load)
         m_updateAction->setEnabled(!fetching);
     });
     connect(m_updateAction, &QAction::triggered, this, &ResourcesModel::checkForUpdates);
+
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &QObject::deleteLater);
 }
 
 ResourcesModel::ResourcesModel(const QString& backendName, QObject* parent)
@@ -87,6 +89,7 @@ ResourcesModel::ResourcesModel(const QString& backendName, QObject* parent)
 
 ResourcesModel::~ResourcesModel()
 {
+    s_self = nullptr;
     qDeleteAll(m_backends);
 }
 
@@ -94,7 +97,7 @@ void ResourcesModel::addResourcesBackend(AbstractResourcesBackend* backend)
 {
     Q_ASSERT(!m_backends.contains(backend));
     if(!backend->isValid()) {
-        qWarning() << "Discarding invalid backend" << backend->name();
+        qCWarning(LIBDISCOVER_LOG) << "Discarding invalid backend" << backend->name();
         CategoryModel::global()->blacklistPlugin(backend->name());
         backend->deleteLater();
         return;
@@ -127,13 +130,14 @@ void ResourcesModel::callerFetchingChanged()
     AbstractResourcesBackend* backend = qobject_cast<AbstractResourcesBackend*>(sender());
 
     if (!backend->isValid()) {
-        qWarning() << "Discarding invalid backend" << backend->name();
+        qCWarning(LIBDISCOVER_LOG) << "Discarding invalid backend" << backend->name();
         int idx = m_backends.indexOf(backend);
         Q_ASSERT(idx>=0);
         m_backends.removeAt(idx);
-//         Q_EMIT backendsChanged();
+        Q_EMIT backendsChanged();
         CategoryModel::global()->blacklistPlugin(backend->name());
         backend->deleteLater();
+        slotFetching();
         return;
     }
 
@@ -203,7 +207,7 @@ void ResourcesModel::registerAllBackends()
     DiscoverBackendsFactory f;
     const auto backends = f.allBackends();
     if(m_initializingBackends==0 && backends.isEmpty()) {
-        qWarning() << "Couldn't find any backends";
+        qCWarning(LIBDISCOVER_LOG) << "Couldn't find any backends";
         emit allInitialized();
     } else {
         foreach(AbstractResourcesBackend* b, backends) {
@@ -216,7 +220,8 @@ void ResourcesModel::registerAllBackends()
 void ResourcesModel::registerBackendByName(const QString& name)
 {
     DiscoverBackendsFactory f;
-    for(auto b : f.backend(name))
+    const auto backends = f.backend(name);
+    for(auto b : backends)
         addResourcesBackend(b);
 
     emit backendsChanged();
@@ -267,13 +272,14 @@ AggregatedResultsStream::AggregatedResultsStream(const QSet<ResultsStream*>& str
 {
     Q_ASSERT(!streams.contains(nullptr));
     if (streams.isEmpty()) {
-        qWarning() << "no streams to aggregate!!";
+        qCWarning(LIBDISCOVER_LOG) << "no streams to aggregate!!";
         QTimer::singleShot(0, this, &AggregatedResultsStream::clear);
     }
 
     for (auto stream: streams) {
         connect(stream, &ResultsStream::resourcesFound, this, &AggregatedResultsStream::addResults);
         connect(stream, &QObject::destroyed, this, &AggregatedResultsStream::destruction);
+        connect(this, &ResultsStream::fetchMore, stream, &ResultsStream::fetchMore);
         m_streams << stream;
     }
 
@@ -281,8 +287,15 @@ AggregatedResultsStream::AggregatedResultsStream(const QSet<ResultsStream*>& str
     connect(&m_delayedEmission, &QTimer::timeout, this, &AggregatedResultsStream::emitResults);
 }
 
+AggregatedResultsStream::~AggregatedResultsStream() = default;
+
 void AggregatedResultsStream::addResults(const QVector<AbstractResource *>& res)
 {
+    for(auto r : res)
+        connect(r, &QObject::destroyed, this, [this, r](){
+            m_results.removeAll(r);
+        });
+
     m_results += res;
 
     m_delayedEmission.start();
@@ -311,12 +324,6 @@ void AggregatedResultsStream::clear()
         Q_EMIT finished();
         deleteLater();
     }
-}
-
-AggregatedResultsStream * ResourcesModel::findResourceByPackageName(const QUrl& search)
-{
-    auto streams = kTransform<QSet<ResultsStream*>>(m_backends, [search](AbstractResourcesBackend* backend){ return backend->findResourceByPackageName(search); });
-    return new AggregatedResultsStream(streams);
 }
 
 AggregatedResultsStream* ResourcesModel::search(const AbstractResourcesBackend::Filters& search)
@@ -372,7 +379,7 @@ void ResourcesModel::setCurrentApplicationBackend(AbstractResourcesBackend* back
                 settings.deleteEntry("currentApplicationBackend");
         }
 
-        qDebug() << "setting currentApplicationBackend" << backend;
+        qCDebug(LIBDISCOVER_LOG) << "setting currentApplicationBackend" << backend;
         m_currentApplicationBackend = backend;
         Q_EMIT currentApplicationBackendChanged(backend);
     }
@@ -387,7 +394,7 @@ void ResourcesModel::initApplicationsBackend()
     auto idx = kIndexOf(backends, [name](AbstractResourcesBackend* b) { return b->name() == name; });
     if (idx<0) {
         idx = kIndexOf(backends, [](AbstractResourcesBackend* b) { return b->hasApplications(); });
-        qDebug() << "falling back applications backend to" << idx;
+        qCDebug(LIBDISCOVER_LOG) << "falling back applications backend to" << idx;
     }
     setCurrentApplicationBackend(backends.value(idx, nullptr), false);
 }

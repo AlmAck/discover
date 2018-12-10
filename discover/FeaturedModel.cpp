@@ -20,13 +20,13 @@
 
 #include "FeaturedModel.h"
 
-#include <QDebug>
+#include "discover_debug.h"
 #include <QStandardPaths>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QDir>
-#include <KIO/FileCopyJob>
+#include <KIO/StoredTransferJob>
 
 #include <utils.h>
 #include <resources/ResourcesModel.h>
@@ -46,8 +46,15 @@ FeaturedModel::FeaturedModel()
     *featuredCache = dir+QLatin1String("/featured-5.9.json");
 
     const QUrl featuredUrl(QStringLiteral("https://autoconfig.kde.org/discover/featured-5.9.json"));
-    KIO::FileCopyJob *getJob = KIO::file_copy(featuredUrl, QUrl::fromLocalFile(*featuredCache), -1, KIO::Overwrite | KIO::HideProgressInfo);
-    connect(getJob, &KIO::FileCopyJob::result, this, &FeaturedModel::refresh);
+    auto *getJob = KIO::storedGet(featuredUrl, KIO::NoReload, KIO::HideProgressInfo);
+    connect(getJob, &KIO::StoredTransferJob::result, this, [this, getJob](){
+        QFile f(*featuredCache);
+        if (!f.open(QIODevice::WriteOnly))
+            qCWarning(DISCOVER_LOG) << "could not open" << *featuredCache << f.errorString();
+        f.write(getJob->data());
+        f.close();
+        refresh();
+    });
 
     if (!ResourcesModel::global()->backends().isEmpty() && QFile::exists(*featuredCache))
         refresh();
@@ -57,13 +64,13 @@ void FeaturedModel::refresh()
 {
     QFile f(*featuredCache);
     if (!f.open(QIODevice::ReadOnly)) {
-        qWarning() << "couldn't open file" << *featuredCache;
+        qCWarning(DISCOVER_LOG) << "couldn't open file" << *featuredCache << f.errorString();
         return;
     }
     QJsonParseError error;
     const auto array = QJsonDocument::fromJson(f.readAll(), &error).array();
     if (error.error) {
-        qWarning() << "couldn't parse" << *featuredCache << ". error:" << error.errorString();
+        qCWarning(DISCOVER_LOG) << "couldn't parse" << *featuredCache << ". error:" << error.errorString();
         return;
     }
 
@@ -74,7 +81,7 @@ void FeaturedModel::refresh()
 void FeaturedModel::setUris(const QVector<QUrl>& uris)
 {
     auto backend = ResourcesModel::global()->currentApplicationBackend();
-    if (uris == m_uris || !backend || backend->isFetching())
+    if (uris == m_uris || !backend)
         return;
 
     QSet<ResultsStream*> streams;
@@ -125,7 +132,7 @@ void FeaturedModel::removeResource(AbstractResource* resource)
     if (index<0)
         return;
 
-    beginRemoveRows({}, index, 0);
+    beginRemoveRows({}, index, index);
     m_resources.removeAt(index);
     endRemoveRows();
 }

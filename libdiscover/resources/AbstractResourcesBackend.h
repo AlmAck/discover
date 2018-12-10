@@ -21,9 +21,9 @@
 #ifndef ABSTRACTRESOURCESBACKEND_H
 #define ABSTRACTRESOURCESBACKEND_H
 
-#include <QtCore/QObject>
-#include <QtCore/QPair>
-#include <QtCore/QVector>
+#include <QObject>
+#include <QPair>
+#include <QVector>
 
 #include "AbstractResource.h"
 #include "Transaction/AddonList.h"
@@ -49,6 +49,7 @@ class DISCOVERCOMMON_EXPORT ResultsStream : public QObject
 
     Q_SIGNALS:
         void resourcesFound(const QVector<AbstractResource*>& resources);
+        void fetchMore();
 };
 
 /**
@@ -66,7 +67,7 @@ class DISCOVERCOMMON_EXPORT ResultsStream : public QObject
  * To show resources in Muon, we need to initialize all resources we want to show beforehand,
  * we should not create resources in the search function. When we reload the resources
  * (e.g. when initializing), the backend needs change the fetching property throughout the
- * processs.
+ * process.
  */
 class DISCOVERCOMMON_EXPORT AbstractResourcesBackend : public QObject
 {
@@ -100,6 +101,7 @@ class DISCOVERCOMMON_EXPORT AbstractResourcesBackend : public QObject
             QUrl resourceUrl;
             QString origin;
             bool allBackends = false;
+            bool filterMinimumState = true;
 
             bool isEmpty() const { return !category && state == AbstractResource::Broken && mimetype.isEmpty() && search.isEmpty() && extends.isEmpty() && resourceUrl.isEmpty() && origin.isEmpty(); }
 
@@ -113,8 +115,6 @@ class DISCOVERCOMMON_EXPORT AbstractResourcesBackend : public QObject
 
         virtual ResultsStream* search(const Filters &search) = 0;//FIXME: Probably provide a standard implementation?!
 
-        virtual ResultsStream* findResourceByPackageName(const QUrl &search) = 0;//FIXME: Probably provide a standard implementation?!
-        
         /**
          * @returns the reviews backend of this AbstractResourcesBackend (which handles all ratings and reviews of resources)
          */

@@ -18,20 +18,19 @@
  */
 
 import QtQuick 2.1
-import QtQuick.Controls 1.1
-import QtQuick.Controls 2.1 as QQC2
+import QtQuick.Controls 2.1
 import QtQuick.Layouts 1.1
-import org.kde.kquickcontrolsaddons 2.0
 import QtQuick.Window 2.1
-import org.kde.kcoreaddons 1.0
 import "navigation.js" as Navigation
-import org.kde.kirigami 2.0 as Kirigami
+import org.kde.kirigami 2.4 as Kirigami
 
-Kirigami.AbstractListItem
+Kirigami.AbstractCard
 {
     id: delegateArea
     property alias application: installButton.application
     property bool compact: false
+    property bool showRating: true
+    showClickFeedback: true
 
     function trigger() {
         if (ListView.view)
@@ -41,11 +40,9 @@ Kirigami.AbstractListItem
     highlighted: ListView.isCurrentItem
     Keys.onReturnPressed: trigger()
     onClicked: trigger()
-    rightPadding: Kirigami.Units.largeSpacing
-    backgroundColor: Kirigami.Theme.viewBackgroundColor
 
-    Item {
-        implicitHeight: Math.max(conts.implicitHeight, resourceIcon.height)
+    contentItem: Item {
+        implicitHeight: delegateArea.compact ? Kirigami.Units.gridUnit * 2 : Kirigami.Units.gridUnit * 4
 
         Kirigami.Icon {
             id: resourceIcon
@@ -56,55 +53,58 @@ Kirigami.AbstractListItem
             anchors {
                 verticalCenter: parent.verticalCenter
                 left: parent.left
-                leftMargin: Kirigami.Units.smallSpacing
             }
         }
 
-        ColumnLayout {
-            id: conts
-            spacing: delegateArea.compact ? 0 : 5
+        GridLayout {
+            columnSpacing: delegateArea.compact ? 0 : 5
+            rowSpacing: delegateArea.compact ? 0 : 5
             anchors {
+                verticalCenter: parent.verticalCenter
                 right: parent.right
                 left: resourceIcon.right
                 leftMargin: Kirigami.Units.largeSpacing
             }
+            columns: 2
+            rows: delegateArea.compact ? 4 : 3
 
             Kirigami.Heading {
                 id: head
                 level: delegateArea.compact ? 3 : 2
                 Layout.fillWidth: true
-                Layout.rightMargin: installButton.width
                 elide: Text.ElideRight
                 text: delegateArea.application.name
                 maximumLineCount: 1
+            }
 
-                InstallApplicationButton {
-                    id: installButton
-                    anchors {
-                        top: parent.top
-                        left: parent.right
-                    }
+            InstallApplicationButton {
+                id: installButton
+                Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                Layout.rowSpan: delegateArea.compact ? 3 : 1
+            }
+
+            RowLayout {
+                visible: showRating
+                spacing: Kirigami.Units.largeSpacing
+                Layout.fillWidth: true
+                Rating {
+                    rating: delegateArea.application.rating ? delegateArea.application.rating.sortableRating : 0
+                    starSize: delegateArea.compact ? summary.font.pointSize : head.font.pointSize
                 }
-
-            }
-            QQC2.Label {
-                id: category
-                Layout.fillWidth: true
-                elide: Text.ElideRight
-                text: delegateArea.application.categoryDisplay
-                visible: !delegateArea.compact && text != page.title
-            }
-
-            Rectangle {
-                color: Kirigami.Theme.linkColor
-                Layout.fillWidth: true
-                Layout.rightMargin: delegateArea.compact ? installButton.width + Kirigami.Units.largeSpacing : 0
-                height: Kirigami.Units.devicePixelRatio / 2
+                Label {
+                    Layout.fillWidth: true
+                    text: delegateArea.application.rating ? i18np("%1 rating", "%1 ratings", delegateArea.application.rating.ratingCount) : i18n("No ratings yet")
+                    visible: delegateArea.application.rating || delegateArea.application.backend.reviewsBackend.isResourceSupported(delegateArea.application)
+                    opacity: 0.5
+                    elide: Text.ElideRight
+                }
             }
 
-            Layout.fillWidth: true
-            QQC2.Label {
+            Label {
+                Layout.columnSpan: delegateArea.compact ? 1 : 2
+                id: summary
                 Layout.fillWidth: true
+
                 bottomPadding: Kirigami.Units.smallSpacing
                 elide: Text.ElideRight
                 text: delegateArea.application.comment

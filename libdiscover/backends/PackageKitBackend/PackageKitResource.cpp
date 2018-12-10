@@ -25,18 +25,28 @@
 #include <KLocalizedString>
 #include <PackageKit/Details>
 #include <PackageKit/Daemon>
+#include <QJsonArray>
 #include <QDebug>
+
+#if defined(WITH_MARKDOWN)
+extern "C" {
+#include <mkdio.h>
+}
+#endif
+
+const QStringList PackageKitResource::m_objects({ QStringLiteral("qrc:/qml/DependenciesButton.qml") });
 
 PackageKitResource::PackageKitResource(QString packageName, QString summary, PackageKitBackend* parent)
     : AbstractResource(parent)
     , m_summary(std::move(summary))
     , m_name(std::move(packageName))
-    , m_dependenciesCount(0)
 {
     setObjectName(m_name);
+
+    connect(this, &PackageKitResource::dependenciesFound, this, [this](const QJsonObject& obj) { setDependenciesCount(obj.size()); });
 }
 
-QString PackageKitResource::name()
+QString PackageKitResource::name() const
 {
     return m_name;
 }
@@ -156,9 +166,9 @@ QStringList PackageKitResource::categories()
     return { QStringLiteral("Unknown") };
 }
 
-bool PackageKitResource::isTechnical() const
+AbstractResource::Type PackageKitResource::type() const
 {
-    return true;
+    return Technical;
 }
 
 void PackageKitResource::fetchDetails()
@@ -171,12 +181,12 @@ void PackageKitResource::fetchDetails()
     backend()->fetchDetails(pkgid);
 }
 
-void PackageKitResource::failedFetchingDetails(PackageKit::Transaction::Error, const QString& msg)
+void PackageKitResource::failedFetchingDetails(PackageKit::Transaction::Error error, const QString& msg)
 {
-    qWarning() << "error fetching details" << msg;
+    qWarning() << "error fetching details" << error << msg;
 }
 
-void PackageKitResource::setDependenciesCount(uint deps)
+void PackageKitResource::setDependenciesCount(int deps)
 {
     if (deps != m_dependenciesCount) {
         m_dependenciesCount = deps;
@@ -195,12 +205,21 @@ void PackageKitResource::setDetails(const PackageKit::Details & details)
         emit stateChanged();
 
         if (!backend()->isFetching())
-            backend()->resourcesChanged(this, {"size", "homepage", "license"});
+            Q_EMIT backend()->resourcesChanged(this, {"size", "homepage", "license"});
     }
 }
 
 void PackageKitResource::fetchChangelog()
 {
+}
+
+void PackageKitResource::fetchUpdateDetails()
+{
+    const auto pkgid = availablePackageId();
+    if (pkgid.isEmpty()) {
+        connect(this, &PackageKitResource::stateChanged, this, &PackageKitResource::fetchUpdateDetails);
+        return;
+    }
     PackageKit::Transaction* t = PackageKit::Daemon::getUpdateDetail(availablePackageId());
     connect(t, &PackageKit::Transaction::updateDetail, this, &PackageKitResource::updateDetail);
     connect(t, &PackageKit::Transaction::errorCode, this, [this](PackageKit::Transaction::Error err, const QString & error) { qWarning() << "error fetching updates:" << err << error; emit changelogFetched(QString()); });
@@ -212,11 +231,15 @@ static void addIfNotEmpty(const QString& title, const QString& content, QString&
         where += QStringLiteral("<p><b>") + title + QStringLiteral("</b>&nbsp;") + QString(content).replace(QStringLiteral("\n"), QStringLiteral("<br />")) + QStringLiteral("</p>");
 }
 
-QString PackageKitResource::joinPackages(const QStringList& pkgids, const QString &_sep)
+QString PackageKitResource::joinPackages(const QStringList& pkgids, const QString &_sep, const QString &shadowPackage)
 {
     QStringList ret;
     foreach(const QString& pkgid, pkgids) {
-        ret += i18nc("package-name (version)", "%1 (%2)", PackageKit::Daemon::packageName(pkgid), PackageKit::Daemon::packageVersion(pkgid));
+        const auto pkgname = PackageKit::Daemon::packageName(pkgid);
+        if (pkgname == shadowPackage)
+            ret += PackageKit::Daemon::packageVersion(pkgid);
+        else
+            ret += i18nc("package-name (version)", "%1 (%2)", pkgname, PackageKit::Daemon::packageVersion(pkgid));
     }
     const QString sep = _sep.isEmpty() ? i18nc("comma separating package names", ", ") : _sep;
     return ret.join(sep);
@@ -230,21 +253,42 @@ static QStringList urlToLinks(const QStringList& urls)
     return ret;
 }
 
-void PackageKitResource::updateDetail(const QString& /*packageID*/, const QStringList& updates, const QStringList& obsoletes, const QStringList& vendorUrls,
-                                      const QStringList& /*bugzillaUrls*/, const QStringList& /*cveUrls*/, PackageKit::Transaction::Restart restart, const QString& updateText,
-                                      const QString& changelog, PackageKit::Transaction::UpdateState state, const QDateTime& /*issued*/, const QDateTime& /*updated*/)
+void PackageKitResource::updateDetail(const QString& packageID, const QStringList& updates, const QStringList& obsoletes, const QStringList& vendorUrls,
+                                      const QStringList& /*bugzillaUrls*/, const QStringList& /*cveUrls*/, PackageKit::Transaction::Restart restart, const QString &_updateText,
+                                      const QString& /*changelog*/, PackageKit::Transaction::UpdateState state, const QDateTime& /*issued*/, const QDateTime& /*updated*/)
 {
+#if defined(WITH_MARKDOWN)
+    const char* xx = _updateText.toUtf8().constData();
+    MMIOT *markdownHandle = mkd_string(xx, _updateText.size(), 0);
+
+    QString updateText;
+    if ( !mkd_compile( markdownHandle, MKD_FENCEDCODE | MKD_GITHUBTAGS | MKD_AUTOLINK ) ) {
+        updateText = _updateText;
+    } else {
+        char *htmlDocument;
+        const int size = mkd_document( markdownHandle, &htmlDocument );
+
+        updateText = QString::fromUtf8( htmlDocument, size );
+    }
+    mkd_cleanup( markdownHandle );
+
+#else
+    const auto& updateText = _updateText;
+#endif
+
+    const auto name = PackageKit::Daemon::packageName(packageID);
+
     QString info;
-    addIfNotEmpty(i18n("Reason:"), updateText, info);
-    addIfNotEmpty(i18n("Obsoletes:"), joinPackages(obsoletes), info);
-    addIfNotEmpty(i18n("Updates:"), joinPackages(updates), info);
+    addIfNotEmpty(i18n("Current Version:"), joinPackages(updates, {}, name), info);
+    addIfNotEmpty(i18n("Obsoletes:"), joinPackages(obsoletes, {}, name), info);
+    addIfNotEmpty(i18n("New Version:"), updateText, info);
     addIfNotEmpty(i18n("Update State:"), PackageKitMessages::updateStateMessage(state), info);
     addIfNotEmpty(i18n("Restart:"), PackageKitMessages::restartMessage(restart), info);
 
     if (!vendorUrls.isEmpty())
         addIfNotEmpty(i18n("Vendor:"), urlToLinks(vendorUrls).join(QStringLiteral(", ")), info);
 
-    emit changelogFetched(info);
+    emit changelogFetched(changelog() + info);
 }
 
 PackageKitBackend* PackageKitResource::backend() const
@@ -254,8 +298,37 @@ PackageKitBackend* PackageKitResource::backend() const
 
 QString PackageKitResource::sizeDescription()
 {
-    if (m_dependenciesCount == 0)
+    if (m_dependenciesCount < 0) {
+        fetchDetails();
+        fetchDependencies();
+    }
+
+    if (m_dependenciesCount <= 0)
         return AbstractResource::sizeDescription();
     else
         return i18np("%2 (plus %1 dependency)", "%2 (plus %1 dependencies)", m_dependenciesCount, AbstractResource::sizeDescription());
+}
+
+QString PackageKitResource::sourceIcon() const
+{
+    return QStringLiteral("package-available");
+}
+
+void PackageKitResource::fetchDependencies()
+{
+    const auto id = isInstalled() ? installedPackageId() : availablePackageId();
+    if (id.isEmpty())
+        return;
+    m_dependenciesCount = 0;
+
+    QSharedPointer<QJsonObject> packageDependencies(new QJsonObject);
+
+    auto trans = PackageKit::Daemon::dependsOn(id);
+    connect(trans, &PackageKit::Transaction::errorCode, this, [this](PackageKit::Transaction::Error, const QString& message) { qWarning() << "Transaction error: " << message << sender(); });
+    connect(trans, &PackageKit::Transaction::package, this, [packageDependencies](PackageKit::Transaction::Info /*info*/, const QString &packageID, const QString &summary) {
+        (*packageDependencies)[PackageKit::Daemon::packageName(packageID)] = summary ;
+    });
+    connect(trans, &PackageKit::Transaction::finished, this, [this, packageDependencies](PackageKit::Transaction::Exit /*status*/) {
+        Q_EMIT dependenciesFound(*packageDependencies);
+    });
 }

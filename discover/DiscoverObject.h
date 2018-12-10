@@ -17,10 +17,10 @@
  *   51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-#ifndef MUONDISCOVERMAINWINDOW_H
-#define MUONDISCOVERMAINWINDOW_H
+#ifndef DISCOVEROBJECT_H
+#define DISCOVEROBJECT_H
 
-#include <QtCore/QUrl>
+#include <QUrl>
 
 #include <QQuickView>
 
@@ -67,8 +67,9 @@ class DiscoverObject : public QObject
         void openMode(const QString& mode);
         void openLocalPackage(const QUrl &localfile);
 
+        void copyTextToClipboard(const QString &text);
+
     private Q_SLOTS:
-        void appHelpActivated();
         void reportBug();
         void switchApplicationLanguage();
         void aboutApplication();
@@ -79,11 +80,13 @@ class DiscoverObject : public QObject
         void listMimeInternal(const QString& mime);
         void listCategoryInternal(Category* cat);
 
-        void compactModeChanged(CompactMode compactMode);
+        void compactModeChanged(DiscoverObject::CompactMode compactMode);
         void preventedClose();
         void unableToFind(const QString &resid);
+        void openErrorPage(const QString &errorMessage);
 
     private:
+        void setRootObjectProperty(const char *name, const QVariant &value);
         void integrateObject(QObject* object);
         QQmlApplicationEngine* engine() const { return m_engine; }
 
@@ -94,4 +97,4 @@ class DiscoverObject : public QObject
         QScopedPointer<CachedNetworkAccessManagerFactory> m_networkAccessManagerFactory;
 };
 
-#endif // MUONINSTALLERDECLARATIVEVIEW_H
+#endif // DISCOVEROBJECT_H

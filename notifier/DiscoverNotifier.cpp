@@ -20,9 +20,11 @@
 
 #include "DiscoverNotifier.h"
 #include "BackendNotifierFactory.h"
+#include <QDebug>
+#include <QDBusInterface>
+#include <QDBusPendingReply>
 #include <KConfig>
 #include <KConfigGroup>
-#include <QDebug>
 #include <KRun>
 #include <KLocalizedString>
 #include <KNotification>
@@ -37,6 +39,16 @@ DiscoverNotifier::DiscoverNotifier(QObject * parent)
     m_backends = BackendNotifierFactory().allBackends();
     foreach(BackendNotifierModule* module, m_backends) {
         connect(module, &BackendNotifierModule::foundUpdates, this, &DiscoverNotifier::updateStatusNotifier);
+        connect(module, &BackendNotifierModule::needsRebootChanged, this, [this]() {
+            if (!m_needsReboot) {
+                m_needsReboot = true;
+                showRebootNotification();
+                Q_EMIT updatesChanged();
+                Q_EMIT needsRebootChanged(true);
+            }
+        });
+
+        connect(module, &BackendNotifierModule::foundUpgradeAction, this, &DiscoverNotifier::foundUpgradeAction);
     }
     connect(&m_timer, &QTimer::timeout, this, &DiscoverNotifier::showUpdatesNotification);
     m_timer.setSingleShot(true);
@@ -54,7 +66,12 @@ void DiscoverNotifier::configurationChanged()
     m_verbose = notifyTypeGroup.readEntry("Verbose", false);
 }
 
-void DiscoverNotifier::showMuon()
+void DiscoverNotifier::showDiscover()
+{
+    KRun::runCommand(QStringLiteral("plasma-discover"), nullptr);
+}
+
+void DiscoverNotifier::showDiscoverUpdates()
 {
     KRun::runCommand(QStringLiteral("plasma-discover --mode update"), nullptr);
 }
@@ -62,7 +79,7 @@ void DiscoverNotifier::showMuon()
 void DiscoverNotifier::showUpdatesNotification()
 {
     if (state()==NoUpdates) {
-        //it's not very helpful to notify that everyting is in order
+        //it's not very helpful to notify that everything is in order
         return;
     }
 
@@ -70,7 +87,7 @@ void DiscoverNotifier::showUpdatesNotification()
     const QString name = i18n("Update");
     e->setDefaultAction(name);
     e->setActions({name});
-    connect(e, QOverload<unsigned int>::of(&KNotification::activated), this, &DiscoverNotifier::showMuon);
+    connect(e, QOverload<unsigned int>::of(&KNotification::activated), this, &DiscoverNotifier::showDiscoverUpdates);
 }
 
 void DiscoverNotifier::updateStatusNotifier()
@@ -79,14 +96,14 @@ void DiscoverNotifier::updateStatusNotifier()
     for (BackendNotifierModule* module: m_backends)
         securityCount += module->securityUpdatesCount();
 
-    uint count = securityUpdatesCount();
+    uint count = securityCount;
     foreach(BackendNotifierModule* module, m_backends)
         count += module->updatesCount();
 
     if (m_count == count && m_securityCount == securityCount)
         return;
 
-    if (state() != NoUpdates && m_count >= count) {
+    if (state() != NoUpdates && count > m_count) {
         m_timer.start();
     }
 
@@ -97,7 +114,9 @@ void DiscoverNotifier::updateStatusNotifier()
 
 DiscoverNotifier::State DiscoverNotifier::state() const
 {
-    if (m_securityCount)
+    if (m_needsReboot)
+        return RebootRequired;
+    else if (m_securityCount)
         return SecurityUpdates;
     else if (m_count)
         return NormalUpdates;
@@ -114,6 +133,8 @@ QString DiscoverNotifier::iconName() const
             return QStringLiteral("update-low");
         case NoUpdates:
             return QStringLiteral("update-none");
+        case RebootRequired:
+            return QStringLiteral("system-reboot");
     }
     return QString();
 }
@@ -127,6 +148,8 @@ QString DiscoverNotifier::message() const
             return i18n("Updates available");
         case NoUpdates:
             return i18n("System up to date");
+        case RebootRequired:
+            return i18n("Computer needs to restart");
     }
     return QString();
 }
@@ -173,4 +196,43 @@ QStringList DiscoverNotifier::loadedModules() const
     for(BackendNotifierModule* module : m_backends)
         ret += QString::fromLatin1(module->metaObject()->className());
     return ret;
+}
+
+void DiscoverNotifier::showRebootNotification()
+{
+    KNotification *notification = new KNotification(QLatin1String("notification"), KNotification::Persistent | KNotification::DefaultEvent);
+    notification->setIconName(QStringLiteral("system-software-update"));
+    notification->setActions(QStringList{QLatin1String("Restart")});
+    notification->setTitle(i18n("Restart is required"));
+    notification->setText(i18n("The system needs to be restarted for the updates to take effect."));
+
+    connect(notification, &KNotification::action1Activated, this, &DiscoverNotifier::reboot);
+
+    notification->sendEvent();
+}
+
+void DiscoverNotifier::reboot()
+{
+    QDBusInterface interface(QStringLiteral("org.kde.ksmserver"), QStringLiteral("/KSMServer"), QStringLiteral("org.kde.KSMServerInterface"), QDBusConnection::sessionBus());
+    interface.asyncCall(QStringLiteral("logout"), 0, 1, 2); // Options: do not ask again | reboot | force
+}
+
+void DiscoverNotifier::foundUpgradeAction(UpgradeAction* action)
+{
+    KNotification *notification = new KNotification(QLatin1String("distupgrade-notification"), KNotification::Persistent | KNotification::DefaultEvent);
+    notification->setIconName(QStringLiteral("system-software-update"));
+    notification->setActions(QStringList{QLatin1String("Upgrade")});
+    notification->setTitle(i18n("Upgrade available"));
+    notification->setText(i18n("New version: %1", action->description()));
+
+    connect(notification, &KNotification::action1Activated, this, [action] () {
+        action->trigger();
+    });
+
+    notification->sendEvent();
+}
+
+bool DiscoverNotifier::isSystemUpToDate() const
+{
+    return m_count==0 && m_securityCount==0;
 }

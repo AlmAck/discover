@@ -1,13 +1,10 @@
-import QtQuick.Controls 1.2
-import QtQuick.Controls 2.1 as QQC2
+import QtQuick.Controls 2.3
 import QtQuick.Layouts 1.1
 import QtQuick 2.4
 import org.kde.discover 2.0
 import org.kde.discover.app 1.0
-import org.kde.kquickcontrolsaddons 2.0
-import org.kde.kcoreaddons 1.0
 import "navigation.js" as Navigation
-import org.kde.kirigami 2.1 as Kirigami
+import org.kde.kirigami 2.3 as Kirigami
 
 DiscoverPage
 {
@@ -43,8 +40,28 @@ DiscoverPage
         text: page.unselected>0 ? i18n("Update Selected") : i18n("Update All")
         visible: updateModel.toUpdateCount
         iconName: "update-none"
-        enabled: !resourcesUpdatesModel.isProgressing
+        enabled: !resourcesUpdatesModel.isProgressing && !ResourcesModel.isFetching
         onTriggered: resourcesUpdatesModel.updateAll()
+    }
+
+    footer: ScrollView {
+        id: scv
+        width: parent.width
+        height: visible ? Kirigami.Units.gridUnit * 10 : 0
+        visible: log.contents.length > 0
+        TextArea {
+            readOnly: true
+            text: log.contents
+
+            cursorPosition: text.length - 1
+            font.family: "monospace"
+
+            ReadFile {
+                id: log
+                filter: ".*ALPM-SCRIPTLET\\] .*"
+                path: "/var/log/pacman.log"
+            }
+        }
     }
 
     Kirigami.Action
@@ -58,18 +75,40 @@ DiscoverPage
 
     readonly property int unselected: (updateModel.totalUpdatesCount - updateModel.toUpdateCount)
     readonly property QtObject currentAction: resourcesUpdatesModel.isProgressing ? cancelUpdateAction : updateAction
-    actions.main: applicationWindow().wideScreen ? null : currentAction
+    actions {
+        left: refreshAction
+        main: currentAction
+    }
 
-    header: QQC2.ToolBar {
+    header: ToolBar {
+        Kirigami.Theme.colorSet: Kirigami.Theme.Button
+        Kirigami.Theme.inherit: false
         visible: (updateModel.totalUpdatesCount > 0 && resourcesUpdatesModel.isProgressing) || updateModel.hasUpdates
 
         RowLayout {
             anchors.fill: parent
+            enabled: page.currentAction.enabled
+
+            CheckBox {
+                Layout.leftMargin: Kirigami.Units.gridUnit + Kirigami.Units.largeSpacing
+                enabled: !resourcesUpdatesModel.isProgressing && !ResourcesModel.isFetching
+                tristate: true
+                checkState: updateModel.toUpdateCount === 0                             ? Qt.Unchecked
+                          : updateModel.toUpdateCount === updateModel.totalUpdatesCount ? Qt.Checked
+                                                                                        : Qt.PartiallyChecked
+
+                onClicked: {
+                    if (updateModel.toUpdateCount === 0)
+                        updateModel.checkAll()
+                    else
+                        updateModel.uncheckAll()
+                }
+            }
+
             LabelBackground {
-                Layout.leftMargin: Kirigami.Units.gridUnit
                 text: updateModel.toUpdateCount + " (" + updateModel.updateSize+")"
             }
-            QQC2.Label {
+            Label {
                 text: i18n("updates selected")
             }
             LabelBackground {
@@ -77,21 +116,12 @@ DiscoverPage
                 text: page.unselected
                 visible: page.unselected>0
             }
-            QQC2.Label {
+            Label {
                 text: i18n("updates not selected")
                 visible: unselectedItem.visible
             }
-
             Item {
                 Layout.fillWidth: true
-            }
-
-            Button {
-                Layout.minimumWidth: Kirigami.Units.gridUnit * 6
-                Layout.rightMargin: Kirigami.Units.gridUnit
-                text: page.currentAction.text
-                visible: !page.actions.main
-                onClicked: page.currentAction.trigger()
             }
         }
     }
@@ -106,6 +136,13 @@ DiscoverPage
     {
         id: updatesView
         currentIndex: -1
+
+        displaced: Transition {
+            YAnimator {
+                duration: Kirigami.Units.longDuration
+                easing.type: Easing.InOutQuad
+            }
+        }
 
         footer: ColumnLayout {
             anchors.right: parent.right
@@ -122,8 +159,8 @@ DiscoverPage
                 visible: page.footerLabel !== ""
                 source: "update-none"
                 opacity: 0.3
-                width: 200
-                height: 200
+                width: Kirigami.Units.gridUnit * 12
+                height: width
             }
             Item {
                 visible: page.footerLabel === ""
@@ -132,23 +169,23 @@ DiscoverPage
             }
         }
 
-        model: updateModel
+        model: QSortFilterProxyModel {
+            sourceModel: updateModel
+            sortRole: UpdateModel.SectionResourceProgressRole
+        }
 
         section {
             property: "section"
             delegate: Kirigami.Heading {
                 x: Kirigami.Units.gridUnit
-                level: 2
+                level: 3
                 text: section
+                height: implicitHeight + Kirigami.Units.largeSpacing * 2
             }
         }
 
-        spacing: Kirigami.Units.smallSpacing
-
         delegate: Kirigami.AbstractListItem {
-            backgroundColor: Kirigami.Theme.viewBackgroundColor
-            x: Kirigami.Units.gridUnit
-            width: ListView.view.width - Kirigami.Units.gridUnit * 2
+            backgroundColor: Kirigami.Theme.backgroundColor
             highlighted: ListView.isCurrentItem
             onEnabledChanged: if (!enabled) {
                 layout.extended = false;
@@ -164,7 +201,7 @@ DiscoverPage
                 id: layout
                 property bool extended: false
                 onExtendedChanged: if (extended) {
-                    updateModel.fetchChangelog(index)
+                    updateModel.fetchUpdateDetails(index)
                 }
                 RowLayout {
                     Layout.fillWidth: true
@@ -172,9 +209,11 @@ DiscoverPage
 
                     CheckBox {
                         id: itemChecked
-                        anchors.verticalCenter: parent.verticalCenter
+                        Layout.leftMargin: Kirigami.Units.gridUnit
+                        Layout.alignment: Qt.AlignVCenter
                         checked: model.checked == Qt.Checked
                         onClicked: model.checked = (model.checked==Qt.Checked ? Qt.Unchecked : Qt.Checked)
+                        enabled: !resourcesUpdatesModel.isProgressing
                     }
 
                     Kirigami.Icon {
@@ -184,7 +223,7 @@ DiscoverPage
                         smooth: true
                     }
 
-                    QQC2.Label {
+                    Label {
                         Layout.fillWidth: true
                         text: i18n("%1 (%2)", display, version)
                         elide: Text.ElideRight
@@ -198,11 +237,11 @@ DiscoverPage
                     }
                 }
 
-                QQC2.Frame {
+                Frame {
                     Layout.fillWidth: true
                     implicitHeight: view.contentHeight
                     visible: layout.extended && changelog.length>0
-                    QQC2.Label {
+                    Label {
                         id: view
                         anchors {
                             right: parent.right
@@ -238,8 +277,9 @@ DiscoverPage
 
     readonly property alias secSinceUpdate: resourcesUpdatesModel.secsToLastUpdate
     state:  ( updateModel.hasUpdates                     ? "has-updates"
-            : ResourcesModel.isFetching                  ? "fetching"
             : resourcesUpdatesModel.isProgressing        ? "progressing"
+            : ResourcesModel.isFetching                  ? "fetching"
+            : resourcesUpdatesModel.needsReboot          ? "reboot"
             : secSinceUpdate < 0                         ? "unknown"
             : secSinceUpdate === 0                       ? "now-uptodate"
             : secSinceUpdate < 1000 * 60 * 60 * 24       ? "uptodate"
@@ -251,7 +291,7 @@ DiscoverPage
         State {
             name: "fetching"
             PropertyChanges { target: page; title: i18nc("@info", "Fetching...") }
-            PropertyChanges { target: page; footerLabel: i18nc("@info", "Looking for updates") }
+            PropertyChanges { target: page; footerLabel: i18nc("@info", "Checking for updates...") }
         },
         State {
             name: "progressing"
@@ -261,6 +301,11 @@ DiscoverPage
         State {
             name: "has-updates"
             PropertyChanges { target: page; title: i18nc("@info", "Updates") }
+        },
+        State {
+            name: "reboot"
+            PropertyChanges { target: page; title: i18nc("@info", "The system requires a reboot") }
+            PropertyChanges { target: page; footerLabel: i18nc("@info", "Reboot") }
         },
         State {
             name: "now-uptodate"

@@ -25,7 +25,7 @@
 #include <Transaction/TransactionModel.h>
 #include <KLocalizedString>
 #include <QDateTime>
-#include <QDebug>
+#include "libdiscover_debug.h"
 #include <QTimer>
 #include <QIcon>
 
@@ -66,12 +66,24 @@ void StandardBackendUpdater::start()
     m_settingUp = true;
     emit progressingChanged(true);
     setProgress(0);
+    auto upgradeList = m_toUpgrade.toList();
+    qSort(upgradeList.begin(), upgradeList.end(), [](const AbstractResource* a, const AbstractResource* b){ return a->name() < b->name(); });
 
-    foreach(AbstractResource* res, m_toUpgrade) {
+    const bool couldCancel = m_canCancel;
+    foreach(AbstractResource* res, upgradeList) {
         m_pendingResources += res;
         auto t = m_backend->installApplication(res);
         t->setVisible(false);
+        t->setProperty("updater", QVariant::fromValue<QObject*>(this));
+        connect(t, &Transaction::downloadSpeedChanged, this, [this](){
+            Q_EMIT downloadSpeedChanged(downloadSpeed());
+        });
+        connect(this, &StandardBackendUpdater::cancelTransaction, t, &Transaction::cancel);
         TransactionModel::global()->addTransaction(t);
+        m_canCancel |= t->isCancellable();
+    }
+    if (m_canCancel != couldCancel) {
+        Q_EMIT cancelableChanged(m_canCancel);
     }
     m_settingUp = false;
 
@@ -80,6 +92,11 @@ void StandardBackendUpdater::start()
     } else {
         setProgress(1);
     }
+}
+
+void StandardBackendUpdater::cancel()
+{
+    Q_EMIT cancelTransaction();
 }
 
 void StandardBackendUpdater::transactionAdded(Transaction* newTransaction)
@@ -207,8 +224,7 @@ QDateTime StandardBackendUpdater::lastUpdate() const
 
 bool StandardBackendUpdater::isCancelable() const
 {
-    //We don't really know when we can cancel, so we never let
-    return false;
+    return m_canCancel;
 }
 
 bool StandardBackendUpdater::isProgressing() const
@@ -223,4 +239,15 @@ double StandardBackendUpdater::updateSize() const
         ret += res->size();
     }
     return ret;
+}
+
+quint64 StandardBackendUpdater::downloadSpeed() const
+{
+    quint64 ret = 0;
+    for(Transaction* t: TransactionModel::global()->transactions()) {
+        if (t->property("updater").value<QObject*>() == this)
+            ret += t->downloadSpeed();
+    }
+    return ret;
+
 }

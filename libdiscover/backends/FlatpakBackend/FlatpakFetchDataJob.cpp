@@ -28,7 +28,7 @@ static FlatpakRef * createFakeRef(FlatpakResource *resource)
     FlatpakRef *ref = nullptr;
     g_autoptr(GError) localError = nullptr;
 
-    const QString id = QStringLiteral("%1/%2/%3/%4").arg(resource->typeAsString(), resource->flatpakName(), resource->arch(), resource->branch());
+    const auto id = resource->ref();
     ref = flatpak_ref_parse(id.toUtf8().constData(), &localError);
 
     if (!ref) {
@@ -59,7 +59,8 @@ QByteArray fetchMetadata(FlatpakInstallation *installation, FlatpakResource *app
     g_autoptr(GBytes) data = flatpak_installation_fetch_remote_metadata_sync(installation, app->origin().toUtf8().constData(), fakeRef, cancellable, &localError);
     if (data) {
         gsize len = 0;
-        metadataContent = QByteArray((char *)g_bytes_get_data(data, &len));
+        auto buff = g_bytes_get_data(data, &len);
+        metadataContent = QByteArray((const char*) buff, len);
     } else {
         qWarning() << "Failed to get metadata file: " << localError->message;
         return {};

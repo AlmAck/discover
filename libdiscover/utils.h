@@ -73,6 +73,30 @@ static int kIndexOf(const Q& list, W func)
     return -1;
 }
 
+template <typename Q, typename W>
+static bool kContains(const Q& list, W func)
+{ return kIndexOf(list, func) != -1; }
+
+template <typename T>
+static QVector<T> kSetToVector(const QSet<T> & set)
+{
+    QVector<T> ret;
+    ret.reserve(set.size());
+    for(auto &x: set)
+        ret.append(x);
+    return ret;
+}
+
+template <typename T>
+static QSet<T> kVectorToSet(const QVector<T> & set)
+{
+    QSet<T> ret;
+    ret.reserve(set.size());
+    for(auto &x: set)
+        ret.insert(x);
+    return ret;
+}
+
 class ElapsedDebug : private QElapsedTimer
 {
 public:
@@ -81,6 +105,16 @@ public:
     void step(const QString &step) { qDebug("step %s(%s): %lld!", m_name.toUtf8().constData(), qPrintable(step), elapsed()); }
 
     QString m_name;
+};
+
+class CallOnDestroy : public QObject
+{
+public:
+    CallOnDestroy(std::function<void()> f) : m_func(std::move(f)) {}
+    ~CallOnDestroy() { m_func(); }
+
+private:
+    std::function<void()> m_func;
 };
 
 #endif

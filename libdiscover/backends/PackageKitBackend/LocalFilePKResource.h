@@ -29,16 +29,22 @@ class LocalFilePKResource : public PackageKitResource
     public:
         LocalFilePKResource(QUrl path, PackageKitBackend* parent);
 
-        QString name() override;
+        QString name() const override;
         QString comment() override;
 
         AbstractResource::State state() override { return m_state; }
+        QString license() override;
         int size() override;
         void markInstalled();
+        QString origin() const override;
+        void fetchDetails() override;
+        bool canExecute() const override { return !m_exec.isEmpty(); }
+        void invokeApplication() const override;
 
     private:
         AbstractResource::State m_state = AbstractResource::None;
         QUrl m_path;
+        QString m_exec;
 };
 
 #endif // LOCALFILEPKRESOURCE_H

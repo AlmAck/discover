@@ -55,7 +55,26 @@ public:
     enum ResourceType {
         DesktopApp = 0,
         Runtime,
+        Extension,
         Source
+    };
+
+    struct Id {
+        FlatpakInstallation * const installation;
+        QString origin;
+        FlatpakResource::ResourceType type;
+        const QString id;
+        QString branch;
+        QString arch;
+        bool operator!=(const Id& other) const { return !operator==(other); }
+        bool operator==(const Id& other) const { return &other == this || (
+               other.installation == installation
+            && other.origin == origin
+            && other.type == type
+            && other.id == id
+            && other.branch == branch
+            && other.arch == arch
+        ); }
     };
 
     static QString typeAsString(ResourceType type) {
@@ -82,7 +101,7 @@ public:
     QVariant icon() const override;
     QString installedVersion() const override;
     int installedSize() const;
-    bool isTechnical() const override;
+    AbstractResource::Type type() const override;
     QUrl homepage() override;
     QUrl helpURL() override;
     QUrl bugURL() override;
@@ -91,7 +110,7 @@ public:
     QString flatpakName() const;
     QString license() override;
     QString longDescription() override;
-    QString name() override;
+    QString name() const override;
     QString origin() const override;
     QString packageName() const override;
     PropertyState propertyState(PropertyKind kind) const;
@@ -101,21 +120,22 @@ public:
     int size() override;
     QString sizeDescription() override;
     AbstractResource::State state() override;
-    ResourceType type() const;
+    ResourceType resourceType() const;
     QString typeAsString() const;
-    QString uniqueId() const;
+    FlatpakResource::Id uniqueId() const;
     QUrl url() const override;
+    QDate releaseDate() const override;
+    QString author() const override;
+    QStringList extends() const override;
 
-    FlatpakInstallation* installation() const { return m_installation; }
+    FlatpakInstallation* installation() const { return m_id.installation; }
 
     void invokeApplication() const override;
     void fetchChangelog() override;
     void fetchScreenshots() override;
 
-    void setArch(const QString &arch);
     void setBranch(const QString &branch);
     void setBundledIcon(const QPixmap &pixmap);
-    void setCommit(const QString &commit);
     void setDownloadSize(int size);
     void setIconPath(const QString &path);
     void setInstalledSize(int size);
@@ -131,16 +151,19 @@ public:
 //     void setAddonInstalled(const QString& addon, bool installed);
 
     void updateFromRef(FlatpakRef* ref);
+    QString ref() const;
+    QString sourceIcon() const override;
 
 Q_SIGNALS:
     void propertyStateChanged(PropertyKind kind, PropertyState state);
 
-public:
-    QList<PackageState> m_addons;
-    AppStream::Component m_appdata;
+private:
+    void setArch(const QString &arch);
+    void setCommit(const QString &commit);
+
+    const AppStream::Component m_appdata;
+    FlatpakResource::Id m_id;
     FlatpakRefKind m_flatpakRefKind;
-    QString m_arch;
-    QString m_branch;
     QPixmap m_bundledIcon;
     QString m_commit;
     int m_downloadSize;
@@ -148,13 +171,21 @@ public:
     QString m_flatpakName;
     QString m_iconPath;
     int m_installedSize;
-    QString m_origin;
     QHash<PropertyKind, PropertyState> m_propertyStates;
     QUrl m_resourceFile;
     QString m_runtime;
-    FlatpakInstallation* const m_installation;
     AbstractResource::State m_state;
-    ResourceType m_type;
 };
+
+inline uint qHash(const FlatpakResource::Id &key)
+{
+    return qHash(key.installation)
+         ^ qHash(key.origin)
+         ^ qHash(key.type)
+         ^ qHash(key.id)
+         ^ qHash(key.branch)
+         ^ qHash(key.arch)
+         ;
+}
 
 #endif // FLATPAKRESOURCE_H

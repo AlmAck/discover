@@ -48,7 +48,7 @@ class DISCOVERCOMMON_EXPORT PackageKitBackend : public AbstractResourcesBackend
         QSet<AbstractResource*> resourcesByPackageName(const QString& name) const;
 
         ResultsStream* search(const AbstractResourcesBackend::Filters & search) override;
-        ResultsStream* findResourceByPackageName(const QUrl& search) override;
+        ResultsStream* findResourceByPackageName(const QUrl& search);
         int updatesCount() const override;
         bool hasSecurityUpdates() const override;
 
@@ -65,7 +65,8 @@ class DISCOVERCOMMON_EXPORT PackageKitBackend : public AbstractResourcesBackend
 
         void clearPackages(const QStringList &packageNames);
         void resolvePackages(const QStringList &packageNames);
-        void fetchDetails(const QString& pkgid);
+        void fetchDetails(const QString& pkgid) { fetchDetails(QSet<QString>{pkgid}); }
+        void fetchDetails(const QSet<QString>& pkgid);
 
         AbstractResource * resourceForFile(const QUrl & ) override;
         void checkForUpdates() override;
@@ -74,9 +75,12 @@ class DISCOVERCOMMON_EXPORT PackageKitBackend : public AbstractResourcesBackend
         bool hasApplications() const override { return true; }
         static QString locateService(const QString &filename);
 
+        QList<AppStream::Component> componentsById(const QString &id) const;
+        void fetchUpdates();
+
     public Q_SLOTS:
         void reloadPackageList();
-        void refreshDatabase();
+        void transactionError(PackageKit::Transaction::Error, const QString& message);
 
     private Q_SLOTS:
         void getPackagesFinished();
@@ -84,23 +88,21 @@ class DISCOVERCOMMON_EXPORT PackageKitBackend : public AbstractResourcesBackend
         void addPackageArch(PackageKit::Transaction::Info info, const QString &packageId, const QString &summary);
         void addPackageNotArch(PackageKit::Transaction::Info info, const QString &packageId, const QString &summary);
         void packageDetails(const PackageKit::Details& details);
-        void transactionError(PackageKit::Transaction::Error, const QString& message);
         void addPackageToUpdate(PackageKit::Transaction::Info, const QString& pkgid, const QString& summary);
         void getUpdatesFinished(PackageKit::Transaction::Exit,uint);
-        void getUpdatesDetailsFinished(PackageKit::Transaction::Exit,uint);
 
     private:
         template <typename T>
         T resourcesByPackageNames(const QStringList& names) const;
-        void fetchUpdates();
 
         void checkDaemonRunning();
         void acquireFetching(bool f);
         void includePackagesToAdd();
         void performDetailsFetch();
         AppPackageKitResource* addComponent(const AppStream::Component& component, const QStringList& pkgNames);
+        void updateProxy();
 
-        AppStream::Pool m_appdata;
+        QScopedPointer<AppStream::Pool> m_appdata;
         PackageKitUpdater* m_updater;
         QPointer<PackageKit::Transaction> m_refresher;
         int m_isFetching;

@@ -21,13 +21,14 @@
 #ifndef ABSTRACTRESOURCE_H
 #define ABSTRACTRESOURCE_H
 
-#include <QtCore/QObject>
+#include <QObject>
 #include <QUrl>
 #include <QStringList>
 #include <QScopedPointer>
 #include <QVector>
 #include <QCollatorSortKey>
 #include <QJsonObject>
+#include <QDate>
 
 #include "discovercommon_export.h"
 #include "PackageState.h"
@@ -54,7 +55,6 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
     Q_PROPERTY(State state READ state NOTIFY stateChanged)
     Q_PROPERTY(QString status READ status NOTIFY stateChanged)
     Q_PROPERTY(QStringList category READ categories CONSTANT)
-    Q_PROPERTY(bool isTechnical READ isTechnical CONSTANT)
     Q_PROPERTY(QUrl homepage READ homepage CONSTANT)
     Q_PROPERTY(QUrl helpURL READ helpURL CONSTANT)
     Q_PROPERTY(QUrl bugURL READ bugURL CONSTANT)
@@ -77,6 +77,9 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
     Q_PROPERTY(QString categoryDisplay READ categoryDisplay CONSTANT)
     Q_PROPERTY(QUrl url READ url CONSTANT)
     Q_PROPERTY(QString executeLabel READ executeLabel CONSTANT)
+    Q_PROPERTY(QString sourceIcon READ sourceIcon CONSTANT)
+    Q_PROPERTY(QString author READ author CONSTANT)
+    Q_PROPERTY(QDate releaseDate READ releaseDate NOTIFY stateChanged)
     public:
         /**
          * This describes the state of the resource
@@ -111,7 +114,7 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
         virtual QString packageName() const = 0;
 
         ///resource name to be displayed
-        virtual QString name() = 0;
+        virtual QString name() const = 0;
 
         ///short description of the resource
         virtual QString comment() = 0;
@@ -138,7 +141,9 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
         ///@returns a URL that points to the place where you can donate money to the app developer
         virtual QUrl donationURL();
 
-        virtual bool isTechnical() const;
+        enum Type { Application, Addon, Technical };
+        Q_ENUM(Type);
+        virtual Type type() const = 0;
 
         virtual int size() = 0;
         virtual QString sizeDescription();
@@ -151,6 +156,7 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
         virtual QString origin() const = 0;
         QString displayOrigin() const;
         virtual QString section() = 0;
+        virtual QString author() const = 0;
 
         ///@returns what kind of mime types the resource can consume
         virtual QStringList mimetypes() const;
@@ -167,7 +173,7 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
         bool canUpgrade();
         bool isInstalled();
 
-        ///@returns a user-readable explaination of the resource status
+        ///@returns a user-readable explanation of the resource status
         ///by default, it will specify what state() is returning
         virtual QString status();
 
@@ -200,10 +206,16 @@ class DISCOVERCOMMON_EXPORT AbstractResource : public QObject
         virtual QUrl url() const;
 
         virtual QString executeLabel() const;
+        virtual QString sourceIcon() const = 0;
+        /**
+         * @returns the date of the resource's most recent release
+         */
+        virtual QDate releaseDate() const = 0;
 
     public Q_SLOTS:
         virtual void fetchScreenshots();
         virtual void fetchChangelog() = 0;
+        virtual void fetchUpdateDetails() { fetchChangelog(); }
 
     Q_SIGNALS:
         void iconChanged();

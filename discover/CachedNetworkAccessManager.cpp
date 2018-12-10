@@ -1,5 +1,5 @@
 /***************************************************************************
- *   Copyright © 2013 Aleix Pol Gonzalez <aleixpol@blue-systems.com>       *
+ *   Copyright © 2017 Aleix Pol Gonzalez <aleixpol@blue-systems.com>       *
  *   Copyright © 2017 Jan Grulich <jgrulich@redhat.com>                    *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or         *
@@ -19,46 +19,33 @@
  *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
-#ifndef FLATPAKTRANSACTION_H
-#define FLATPAKTRANSACTION_H
+#include "CachedNetworkAccessManager.h"
 
-#include <Transaction/Transaction.h>
-#include <QPointer>
+#include <QNetworkDiskCache>
+#include <QNetworkRequest>
+#include <QStandardPaths>
+#include <QStorageInfo>
 
-extern "C" {
-#include <flatpak.h>
-#include <gio/gio.h>
-#include <glib.h>
+CachedNetworkAccessManager::CachedNetworkAccessManager(const QString &path, QObject *parent)
+    : KIO::AccessManager(parent)
+{
+    const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QLatin1Char('/') + path;
+    QNetworkDiskCache *cache = new QNetworkDiskCache(this);
+    QStorageInfo storageInfo(cacheDir);
+    cache->setCacheDirectory(cacheDir);
+    cache->setMaximumCacheSize(storageInfo.bytesTotal() / 1000);
+    setCache(cache);
 }
 
-class FlatpakResource;
-class FlatpakTransactionJob;
-class FlatpakTransaction : public Transaction
+QNetworkReply * CachedNetworkAccessManager::createRequest(Operation op, const QNetworkRequest &request, QIODevice *outgoingData)
 {
-Q_OBJECT
-public:
-    FlatpakTransaction(FlatpakResource *app, Role role, bool delayStart = false);
-    FlatpakTransaction(FlatpakResource *app, FlatpakResource *runtime, Role role, bool delayStart = false);
+    QNetworkRequest req(request);
+    req.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
+    return QNetworkAccessManager::createRequest(op, request, outgoingData);
+}
 
-    ~FlatpakTransaction();
+QNetworkAccessManager * CachedNetworkAccessManagerFactory::create(QObject *parent)
+{
+    return new CachedNetworkAccessManager(QStringLiteral("images"), parent);
+}
 
-    void cancel() override;
-    void setRuntime(FlatpakResource *runtime);
-
-public Q_SLOTS:
-    void onJobFinished();
-    void onJobProgressChanged(int progress);
-    void finishTransaction();
-    void start();
-
-private:
-    void processRelatedRefs(FlatpakResource *resource);
-    void updateProgress();
-
-    QPointer<FlatpakResource> m_app;
-    QPointer<FlatpakResource> m_runtime;
-    QPointer<FlatpakTransactionJob> m_appJob;
-    QList<QPointer<FlatpakTransactionJob> > m_jobs;
-};
-
-#endif // FLATPAKTRANSACTION_H

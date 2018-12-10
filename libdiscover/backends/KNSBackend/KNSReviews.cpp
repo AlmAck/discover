@@ -32,8 +32,6 @@
 #include <QDebug>
 #include <QDesktopServices>
 
-Q_DECLARE_METATYPE(AbstractResource*)
-
 class SharedManager : public QObject
 {
 Q_OBJECT
@@ -63,15 +61,7 @@ Rating* KNSReviews::ratingForApplication(AbstractResource* app) const
         return nullptr;
     }
 
-    const int noc = resource->entry().numberOfComments();
-    const int rating = resource->entry().rating();
-    Q_ASSERT(rating <= 100);
-    return new Rating(
-        resource->packageName(),
-        noc,
-        rating/10,
-        QLatin1Char('[')+QString::number(noc*rating)+QLatin1Char(']')
-    );
+    return resource->ratingInstance();
 }
 
 void KNSReviews::fetchReviews(AbstractResource* app, int page)
@@ -85,10 +75,12 @@ void KNSReviews::fetchReviews(AbstractResource* app, int page)
     job->setProperty("app", qVariantFromValue<AbstractResource*>(app));
     connect(job, &Attica::BaseJob::finished, this, &KNSReviews::commentsReceived);
     job->start();
+    m_fetching++;
 }
 
 void KNSReviews::commentsReceived(Attica::BaseJob* j)
 {
+    m_fetching--;
     Attica::ListJob<Attica::Comment>* job = static_cast<Attica::ListJob<Attica::Comment>*>(j);
     Attica::Comment::List comments = job->itemList();
 
@@ -107,7 +99,7 @@ void KNSReviews::commentsReceived(Attica::BaseJob* j)
 
 bool KNSReviews::isFetching() const
 {
-    return m_backend->isFetching();
+    return m_fetching > 0;
 }
 
 void KNSReviews::flagReview(Review*  /*r*/, const QString&  /*reason*/, const QString&  /*text*/)

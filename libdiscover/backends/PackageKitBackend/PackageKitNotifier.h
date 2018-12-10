@@ -42,6 +42,7 @@ public:
     uint updatesCount() override;
     void recheckSystemUpdateNeeded() override;
     void refreshDatabase();
+    bool needsReboot() const override { return m_needsReboot; }
 
 private Q_SLOTS:
     void package(PackageKit::Transaction::Info info, const QString &packageID, const QString &summary);
@@ -51,12 +52,13 @@ private Q_SLOTS:
     void onDistroUpgrade(PackageKit::Transaction::DistroUpgrade type, const QString &name, const QString &description);
 
 private:
+    void nowNeedsReboot();
     void recheckSystemUpdate();
     void checkOfflineUpdates();
-    void requireRestartNotification(PackageKit::Transaction::Restart type);
     void setupGetUpdatesTransaction(PackageKit::Transaction* transaction);
     QProcess* checkAptVariable(const QString &aptconfig, const QLatin1String& varname, std::function<void(const QStringRef& val)> func);
 
+    bool m_needsReboot = false;
     uint m_securityUpdates;
     uint m_normalUpdates;
     QPointer<PackageKit::Transaction> m_refresher;

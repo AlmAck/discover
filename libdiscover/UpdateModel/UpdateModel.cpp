@@ -22,7 +22,8 @@
 
 // Qt includes
 #include <QFont>
-#include <QDebug>
+#include <QTimer>
+#include "libdiscover_debug.h"
 
 // KDE includes
 #include <KFormat>
@@ -36,15 +37,24 @@
 
 UpdateModel::UpdateModel(QObject *parent)
     : QAbstractListModel(parent)
+    , m_updateSizeTimer(new QTimer(this))
     , m_updates(nullptr)
 {
     connect(ResourcesModel::global(), &ResourcesModel::fetchingChanged, this, &UpdateModel::activityChanged);
     connect(ResourcesModel::global(), &ResourcesModel::updatesCountChanged, this, &UpdateModel::activityChanged);
     connect(ResourcesModel::global(), &ResourcesModel::resourceDataChanged, this, &UpdateModel::resourceDataChanged);
     connect(this, &UpdateModel::toUpdateChanged, this, &UpdateModel::updateSizeChanged);
+
+    m_updateSizeTimer->setInterval(100);
+    m_updateSizeTimer->setSingleShot(true);
+    connect(m_updateSizeTimer, &QTimer::timeout, this, &UpdateModel::updateSizeChanged);
 }
 
-UpdateModel::~UpdateModel() = default;
+UpdateModel::~UpdateModel()
+{
+    qDeleteAll(m_updateItems);
+    m_updateItems.clear();
+}
 
 QHash<int,QByteArray> UpdateModel::roleNames() const
 {
@@ -81,7 +91,7 @@ void UpdateModel::resourceHasProgressed(AbstractResource* res, qreal progress)
     item->setProgress(progress);
 
     const QModelIndex idx = indexFromItem(item);
-    Q_EMIT dataChanged(idx, idx, { ResourceProgressRole });
+    Q_EMIT dataChanged(idx, idx, { ResourceProgressRole, SectionResourceProgressRole });
 }
 
 void UpdateModel::activityChanged()
@@ -89,8 +99,13 @@ void UpdateModel::activityChanged()
     if (m_updates) {
         if (!m_updates->isProgressing()) {
             m_updates->prepare();
-        }
-        setResources(m_updates->toUpdate());
+            setResources(m_updates->toUpdate());
+
+            for(auto item : qAsConst(m_updateItems)) {
+                item->setProgress(0);
+            }
+        } else
+            setResources(m_updates->toUpdate());
     }
 }
 
@@ -119,8 +134,19 @@ QVariant UpdateModel::data(const QModelIndex &index, int role) const
         return item->progress();
     case ChangelogRole:
         return item->changelog();
-    case SectionRole:
-        return item->section();
+    case SectionRole: {
+        static const QString appUpdatesSection = i18nc("@item:inlistbox", "Application Updates");
+        static const QString systemUpdateSection = i18nc("@item:inlistbox", "System Updates");
+        static const QString addonsSection = i18nc("@item:inlistbox", "Addons");
+        switch(item->resource()->type()) {
+            case AbstractResource::Application: return appUpdatesSection;
+            case AbstractResource::Technical: return systemUpdateSection;
+            case AbstractResource::Addon: return addonsSection;
+        }
+        Q_UNREACHABLE();
+    }
+    case SectionResourceProgressRole:
+        return (100-item->progress()) + (101 * item->resource()->type());
     default:
         break;
     }
@@ -158,7 +184,10 @@ bool UpdateModel::setData(const QModelIndex &idx, const QVariant &value, int rol
 
         checkResources(apps, newValue);
         Q_ASSERT(idx.data(Qt::CheckStateRole) == value);
-        Q_EMIT dataChanged(idx, idx, { Qt::CheckStateRole });
+
+        //When un/checking some backends will decide to add or remove a bunch of packages, so refresh it all
+        auto m = idx.model();
+        Q_EMIT dataChanged(m->index(0, 0), m->index(m->rowCount()-1, 0), { Qt::CheckStateRole });
         Q_EMIT toUpdateChanged();
 
         return true;
@@ -167,13 +196,13 @@ bool UpdateModel::setData(const QModelIndex &idx, const QVariant &value, int rol
     return false;
 }
 
-void UpdateModel::fetchChangelog(int row)
+void UpdateModel::fetchUpdateDetails(int row)
 {
     UpdateItem *item = itemFromIndex(index(row, 0));
     Q_ASSERT(item);
     if (!item) return;
 
-    item->app()->fetchChangelog();
+    item->app()->fetchUpdateDetails();
 }
 
 void UpdateModel::integrateChangelog(const QString &changelog)
@@ -191,33 +220,40 @@ void UpdateModel::integrateChangelog(const QString &changelog)
     emit dataChanged(idx, idx, { ChangelogRole });
 }
 
-void UpdateModel::setResources(const QList< AbstractResource* >& resources)
+void UpdateModel::setResources(const QList<AbstractResource*>& resources)
 {
+    if (resources == m_resources) {
+        return;
+    }
+    m_resources = resources;
+
     beginResetModel();
     qDeleteAll(m_updateItems);
     m_updateItems.clear();
 
-    const QString importantUpdatesSection = i18nc("@item:inlistbox", "Important Security Updates");
-    const QString appUpdatesSection = i18nc("@item:inlistbox", "Application Updates");
-    const QString systemUpdateSection = i18nc("@item:inlistbox", "System Updates");
-    QVector<UpdateItem*> appItems, systemItems;
+    QVector<UpdateItem*> appItems, systemItems, addonItems;
     foreach(AbstractResource* res, resources) {
         connect(res, &AbstractResource::changelogFetched, this, &UpdateModel::integrateChangelog, Qt::UniqueConnection);
 
         UpdateItem *updateItem = new UpdateItem(res);
 
-        if(!res->isTechnical()) {
-            updateItem->setSection(appUpdatesSection);
-            appItems += updateItem;
-        } else {
-            updateItem->setSection(systemUpdateSection);
-            systemItems += updateItem;
+        switch(res->type()) {
+            case AbstractResource::Technical:
+                systemItems += updateItem;
+                break;
+            case AbstractResource::Application:
+                appItems += updateItem;
+                break;
+            case AbstractResource::Addon:
+                addonItems += updateItem;
+                break;
         }
     }
     const auto sortUpdateItems = [](UpdateItem *a, UpdateItem *b) { return a->name() < b->name(); };
     qSort(appItems.begin(), appItems.end(), sortUpdateItems);
     qSort(systemItems.begin(), systemItems.end(), sortUpdateItems);
-    m_updateItems = (QVector<UpdateItem*>() << appItems << systemItems);
+    qSort(addonItems.begin(), addonItems.end(), sortUpdateItems);
+    m_updateItems = (QVector<UpdateItem*>() << appItems << addonItems << systemItems);
     endResetModel();
 
     Q_EMIT hasUpdatesChanged(!resources.isEmpty());
@@ -237,8 +273,29 @@ ResourcesUpdatesModel* UpdateModel::backend() const
 int UpdateModel::toUpdateCount() const
 {
     int ret = 0;
+    QSet<QString> packages;
     foreach (UpdateItem* item, m_updateItems) {
+        const auto packageName = item->resource()->packageName();
+        if (packages.contains(packageName)) {
+            continue;
+        }
+        packages.insert(packageName);
         ret += item->checked() != Qt::Unchecked ? 1 : 0;
+    }
+    return ret;
+}
+
+int UpdateModel::totalUpdatesCount() const
+{
+    int ret = 0;
+    QSet<QString> packages;
+    foreach (UpdateItem* item, m_updateItems) {
+        const auto packageName = item->resource()->packageName();
+        if (packages.contains(packageName)) {
+            continue;
+        }
+        packages.insert(packageName);
+        ret += 1;
     }
     return ret;
 }
@@ -275,9 +332,23 @@ void UpdateModel::resourceDataChanged(AbstractResource* res, const QVector<QByte
 
     const auto index = indexFromItem(item);
     if (properties.contains("state"))
-        dataChanged(index, index, {SizeRole, VersionRole});
+        Q_EMIT dataChanged(index, index, {SizeRole, VersionRole});
     else if (properties.contains("size")) {
-        dataChanged(index, index, {SizeRole});
-        Q_EMIT updateSizeChanged();
+        Q_EMIT dataChanged(index, index, {SizeRole});
+        m_updateSizeTimer->start();
     }
+}
+
+void UpdateModel::checkAll()
+{
+    for(int i=0, c=rowCount(); i<c; ++i)
+        if(index(i,0).data(Qt::CheckStateRole) != Qt::Checked)
+            setData(index(i,0), Qt::Checked, Qt::CheckStateRole);
+}
+
+void UpdateModel::uncheckAll()
+{
+    for(int i=0, c=rowCount(); i<c; ++i)
+        if(index(i,0).data(Qt::CheckStateRole) != Qt::Unchecked)
+            setData(index(i,0), Qt::Unchecked, Qt::CheckStateRole);
 }

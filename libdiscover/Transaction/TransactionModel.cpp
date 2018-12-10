@@ -21,12 +21,13 @@
 #include "TransactionModel.h"
 
 // Qt includes
-#include <QtCore/QDebug>
-#include <QtCore/QMetaProperty>
+#include <QDebug>
+#include <QMetaProperty>
 #include <KLocalizedString>
 
 // Own includes
 #include "resources/AbstractResource.h"
+#include "libdiscover_debug.h"
 
 Q_GLOBAL_STATIC(TransactionModel, globalTransactionModel)
 
@@ -174,7 +175,7 @@ void TransactionModel::removeTransaction(Transaction *trans)
     trans->deleteLater();
     int r = m_transactions.indexOf(trans);
     if (r<0) {
-        qWarning() << "transaction not part of the model" << trans;
+        qCWarning(LIBDISCOVER_LOG) << "transaction not part of the model" << trans;
         return;
     }
 

@@ -22,7 +22,9 @@
 
 #include <resources/AbstractResource.h>
 #include "TransactionModel.h"
-#include <QDebug>
+#include <KFormat>
+#include <KLocalizedString>
+#include "libdiscover_debug.h"
 
 Transaction::Transaction(QObject *parent, AbstractResource *resource,
                          Role role, const AddonList& addons)
@@ -39,7 +41,7 @@ Transaction::Transaction(QObject *parent, AbstractResource *resource,
 Transaction::~Transaction()
 {
     if(status()<DoneStatus || TransactionModel::global()->contains(this)) {
-        qWarning() << "destroying Transaction before it's over" << this;
+        qCWarning(LIBDISCOVER_LOG) << "destroying Transaction before it's over" << this;
         TransactionModel::global()->removeTransaction(this);
     }
 }
@@ -131,4 +133,17 @@ void Transaction::setVisible(bool visible)
         m_visible = visible;
         Q_EMIT visibleChanged(visible);
     }
+}
+
+void Transaction::setDownloadSpeed(quint64 downloadSpeed)
+{
+    if (downloadSpeed != m_downloadSpeed) {
+        m_downloadSpeed = downloadSpeed;
+        Q_EMIT downloadSpeedChanged(downloadSpeed);
+    }
+}
+
+QString Transaction::downloadSpeedString() const
+{
+    return i18nc("@label Download rate", "%1/s", KFormat().formatByteSize(downloadSpeed()));
 }

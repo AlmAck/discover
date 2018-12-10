@@ -37,7 +37,7 @@ public:
     explicit SnapBackend(QObject* parent = nullptr);
 
     ResultsStream * search(const AbstractResourcesBackend::Filters & search) override;
-    ResultsStream * findResourceByPackageName(const QUrl& search) override;
+    ResultsStream * findResourceByPackageName(const QUrl& search);
 
     QString displayName() const override;
     int updatesCount() const override;
@@ -57,7 +57,7 @@ public:
 private:
     void setFetching(bool fetching);
     template <class T>
-    ResultsStream* populate(T* snaps, AbstractResource::State state);
+    ResultsStream* populate(T* snaps);
 
     QHash<QString, SnapResource*> m_resources;
     StandardBackendUpdater* m_updater;

@@ -19,7 +19,6 @@
  ***************************************************************************/
 
 import QtQuick 2.5
-import QtQuick.Controls 1.1 as QQC1
 import QtQuick.Controls 2.1
 import org.kde.kirigami 2.1 as Kirigami
 
@@ -38,7 +37,9 @@ TextField
             searchField.selectAll()
         }
     }
-    onAccepted: currentSearchText = text
+    onAccepted: {
+        currentSearchText = text
+    }
 
     hoverEnabled: true
     ToolTip {
@@ -47,34 +48,34 @@ TextField
         text: searchAction.shortcut
     }
 
-    QQC1.ToolButton {
+    function clearText() {
+        searchField.text = ""
+        searchField.accepted()
+    }
+
+    ToolButton {
         anchors {
             top: parent.top
             right: parent.right
             bottom: parent.bottom
             margins: Kirigami.Units.smallSpacing
         }
-        iconName: "edit-clear"
+        icon.name: "edit-clear"
         visible: searchField.text != ""
-        onClicked: {
-            searchField.text = ""
-            searchField.accepted()
-        }
+        onClicked: clearText()
     }
 
     Connections {
         ignoreUnknownSignals: true
         target: page
-        onClearSearch: {
-            searchField.text = ""
-        }
+        onClearSearch: clearText()
     }
 
     Connections {
         target: applicationWindow()
         onCurrentTopLevelChanged: {
             if (applicationWindow().currentTopLevel.length > 0)
-                searchField.text = ""
+                clearText()
         }
     }
 }

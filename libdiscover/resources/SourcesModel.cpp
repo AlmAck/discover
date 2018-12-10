@@ -20,7 +20,7 @@
 
 #include "SourcesModel.h"
 #include <QtGlobal>
-#include <QDebug>
+#include "libdiscover_debug.h"
 #include <QAction>
 #include "resources/AbstractResourcesBackend.h"
 #include "resources/AbstractSourcesBackend.h"
@@ -29,27 +29,6 @@ Q_GLOBAL_STATIC(SourcesModel, s_sources)
 
 const auto DisplayName = "DisplayName";
 const auto SourcesBackendId = "SourcesBackend";
-
-class SourceBackendModel : public QAbstractListModel
-{
-Q_OBJECT
-public:
-    SourceBackendModel(AbstractResourcesBackend* backend)
-        : QAbstractListModel(backend), m_backend(backend)
-    {}
-
-    QVariant data(const QModelIndex & index, int role) const override {
-        if (!index.isValid()) return {};
-        switch(role) {
-            case SourcesModel::ResourcesBackend: return QVariant::fromValue<QObject*>(m_backend);
-        }
-        return {};
-    }
-    int rowCount(const QModelIndex & parent) const override { return parent.isValid() ? 0 : 1; }
-
-private:
-    AbstractResourcesBackend* m_backend;
-};
 
 SourcesModel::SourcesModel(QObject* parent)
     : KConcatenateRowsProxyModel(parent)
@@ -66,38 +45,24 @@ QHash<int, QByteArray> SourcesModel::roleNames() const
 {
     QHash<int, QByteArray> roles = KConcatenateRowsProxyModel::roleNames();
     roles.insert(AbstractSourcesBackend::IdRole, "sourceId");
+    roles.insert(SourceNameRole, "sourceName");
     roles.insert(SourcesBackend, "sourcesBackend");
     roles.insert(ResourcesBackend, "resourcesBackend");
+    roles.insert(EnabledRole, "enabled");
     return roles;
 }
 
 void SourcesModel::addSourcesBackend(AbstractSourcesBackend* sources)
 {
     auto backend = qobject_cast<AbstractResourcesBackend*>(sources->parent());
-    auto b = addBackend(backend);
-    if (!b)
-        return;
 
     auto m = sources->sources();
     m->setProperty(DisplayName, backend->displayName());
     m->setProperty(SourcesBackendId, qVariantFromValue<QObject*>(sources));
-    b->setProperty(SourcesBackendId, qVariantFromValue<QObject*>(sources));
     addSourceModel(m);
-}
 
-
-SourceBackendModel* SourcesModel::addBackend(AbstractResourcesBackend* backend)
-{
-    Q_ASSERT(backend);
-    const auto inSourcesModel = "InSourcesModel";
-    if (backend->dynamicPropertyNames().contains(inSourcesModel))
-        return nullptr;
-    backend->setProperty(inSourcesModel, 1);
-
-    auto b = new SourceBackendModel(backend);
-    b->setProperty(DisplayName, backend->displayName());
-    addSourceModel(b);
-    return b;
+    if (!m->rowCount())
+        qWarning() << "adding empty sources model" << m;
 }
 
 const QAbstractItemModel * SourcesModel::modelAt(const QModelIndex& index) const
@@ -114,9 +79,20 @@ QVariant SourcesModel::data(const QModelIndex& index, int role) const
             return modelAt(index)->property(DisplayName);
         case SourcesBackend:
             return modelAt(index)->property(SourcesBackendId);
+        case EnabledRole:
+            return QVariant(flags(index) & Qt::ItemIsEnabled);
         default:
             return KConcatenateRowsProxyModel::data(index, role);
     }
 }
 
-#include "SourcesModel.moc"
+AbstractSourcesBackend * SourcesModel::sourcesBackendByName(const QString& id) const
+{
+    for(int i = 0, c = rowCount(); i < c; ++i) {
+        const auto idx = index(i, 0);
+        if (idx.data(SourceNameRole) == id) {
+            return qobject_cast<AbstractSourcesBackend *>(idx.data(SourcesBackend).value<QObject*>());
+        }
+    }
+    return nullptr;
+}

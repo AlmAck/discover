@@ -33,7 +33,7 @@
 
 #include <QCryptographicHash>
 #include <QDir>
-#include <QDebug>
+#include "libdiscover_debug.h"
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -83,7 +83,7 @@ void OdrsReviewsBackend::ratingsFetched(KJob *job)
 {
     m_isFetching = false;
     if (job->error()) {
-        qWarning() << "Failed to fetch ratings " << job->errorString();
+        qCWarning(LIBDISCOVER_LOG) << "Failed to fetch ratings " << job->errorString();
     } else {
         parseRatings();
     }
@@ -132,7 +132,7 @@ static QString userHash()
         return QString();
     }
 
-    QString salted = QStringLiteral("gnome-software[%1:%2]").arg(KUser().loginName()).arg(machineId);
+    QString salted = QStringLiteral("gnome-software[%1:%2]").arg(KUser().loginName(), machineId);
     return QString::fromUtf8(QCryptographicHash::hash(salted.toUtf8(), QCryptographicHash::Sha1).toHex());
 }
 
@@ -180,36 +180,37 @@ void OdrsReviewsBackend::reviewsFetched()
 {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
 
-    if (reply->error() == QNetworkReply::NoError) {
-        QByteArray data = reply->readAll();
-        const QJsonDocument document = QJsonDocument::fromJson(data);
-        AbstractResource *resource = qobject_cast<AbstractResource*>(reply->request().originatingObject());
-        Q_ASSERT(resource);
-        parseReviews(document, resource);
-
-        // Store reviews to cache so we don't need to download them all the time
-        if (document.array().isEmpty()) {
-            return;
-        }
-
-        QJsonObject jsonObject = document.array().first().toObject();
-        if (jsonObject.isEmpty()) {
-            return;
-        }
-
-        QFile file(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/reviews/%1.json").arg(jsonObject.value(QStringLiteral("app_id")).toString()));
-        if (file.open(QIODevice::WriteOnly)) {
-            file.write(document.toJson());
-            file.close();
-        }
-    } else {
+    if (reply->error() != QNetworkReply::NoError) {
+        qCWarning(LIBDISCOVER_LOG) << "error fetching reviews:" << reply->errorString();
         m_isFetching = false;
+        return;
+    }
+
+    QByteArray data = reply->readAll();
+    const QJsonDocument document = QJsonDocument::fromJson(data);
+    AbstractResource *resource = qobject_cast<AbstractResource*>(reply->request().originatingObject());
+    Q_ASSERT(resource);
+    parseReviews(document, resource);
+
+    // Store reviews to cache so we don't need to download them all the time
+    if (document.array().isEmpty()) {
+        return;
+    }
+
+    QJsonObject jsonObject = document.array().first().toObject();
+    if (jsonObject.isEmpty()) {
+        return;
+    }
+
+    QFile file(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/reviews/%1.json").arg(jsonObject.value(QStringLiteral("app_id")).toString()));
+    if (file.open(QIODevice::WriteOnly)) {
+        file.write(document.toJson());
     }
 }
 
 Rating * OdrsReviewsBackend::ratingForApplication(AbstractResource *app) const
 {
-    if (app->isTechnical()) {
+    if (app->appstreamId().isEmpty()) {
         return nullptr;
     }
 
@@ -226,7 +227,7 @@ void OdrsReviewsBackend::submitUsefulness(Review *review, bool useful)
                      {QStringLiteral("review_id"), QJsonValue(double(review->id()))} //if we really need uint64 we should get it in QJsonValue
     });
 
-    QNetworkRequest request(QUrl(QStringLiteral(APIURL "/%1").arg(useful ? QStringLiteral("upvote") : QStringLiteral("downvote"))));
+    QNetworkRequest request(QUrl(QStringLiteral(APIURL) + (useful ? QLatin1String("/upvote") : QLatin1String("/downvote"))));
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json; charset=utf-8"));
     request.setHeader(QNetworkRequest::ContentLengthHeader, document.toJson().size());
 
@@ -239,9 +240,9 @@ void OdrsReviewsBackend::usefulnessSubmitted()
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
 
     if (reply->error() == QNetworkReply::NoError) {
-        qWarning() << "Usefullness submitted";
+        qCWarning(LIBDISCOVER_LOG) << "Usefullness submitted";
     } else {
-        qWarning() << "Failed to submit usefulness: " << reply->errorString();
+        qCWarning(LIBDISCOVER_LOG) << "Failed to submit usefulness: " << reply->errorString();
     }
 }
 
@@ -283,16 +284,16 @@ void OdrsReviewsBackend::submitReview(AbstractResource *res, const QString &summ
 void OdrsReviewsBackend::reviewSubmitted(QNetworkReply *reply)
 {
     if (reply->error() == QNetworkReply::NoError) {
-        qWarning() << "Review submitted";
+        qCWarning(LIBDISCOVER_LOG) << "Review submitted";
         AbstractResource *resource = qobject_cast<AbstractResource*>(reply->request().originatingObject());
         const QJsonArray array = {resource->getMetadata(QStringLiteral("ODRS::review_map")).toObject()};
-        QJsonDocument document = QJsonDocument(array);
+        const QJsonDocument document(array);
         // Remove local file with reviews so we can re-download it next time to get our review
         QFile file(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/reviews/%1.json").arg(array.first().toObject().value(QStringLiteral("app_id")).toString()));
         file.remove();
         parseReviews(document, resource);
     } else {
-        qWarning() << "Failed to submit review: " << reply->errorString();
+        qCWarning(LIBDISCOVER_LOG) << "Failed to submit review: " << reply->errorString();
     }
 }
 
@@ -301,7 +302,8 @@ void OdrsReviewsBackend::parseRatings()
     QFile ratingsDocument(QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + QStringLiteral("/ratings/ratings"));
     if (ratingsDocument.open(QIODevice::ReadOnly)) {
         QJsonDocument jsonDocument = QJsonDocument::fromJson(ratingsDocument.readAll());
-        QJsonObject jsonObject = jsonDocument.object();
+        const QJsonObject jsonObject = jsonDocument.object();
+        m_ratings.reserve(jsonObject.size());
         for (auto it = jsonObject.begin(); it != jsonObject.end(); it++) {
             QJsonObject appJsonObject = it.value().toObject();
 
@@ -314,6 +316,7 @@ void OdrsReviewsBackend::parseRatings()
                                       { QStringLiteral("star5"), appJsonObject.value(QLatin1String("star5")).toInt() } };
 
             Rating *rating = new Rating(it.key(), ratingCount, ratingMap);
+            rating->setParent(this);
             m_ratings.insert(it.key(), rating);
         }
         ratingsDocument.close();
@@ -325,12 +328,16 @@ void OdrsReviewsBackend::parseRatings()
 void OdrsReviewsBackend::parseReviews(const QJsonDocument &document, AbstractResource *resource)
 {
     m_isFetching = false;
+    Q_ASSERT(resource);
+    if (!resource) {
+        return;
+    }
 
     QJsonArray reviews = document.array();
     if (!reviews.isEmpty()) {
         QVector<ReviewPtr> reviewList;
         for (auto it = reviews.begin(); it != reviews.end(); it++) {
-            QJsonObject review = it->toObject();
+            const QJsonObject review = it->toObject();
             if (!review.isEmpty()) {
                 const int usefulFavorable = review.value(QStringLiteral("karma_up")).toInt();
                 const int usefulTotal = review.value(QStringLiteral("karma_down")).toInt() + usefulFavorable;

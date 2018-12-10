@@ -56,6 +56,8 @@ class DISCOVERCOMMON_EXPORT AbstractBackendUpdater : public QObject
     Q_PROPERTY(qreal progress READ progress NOTIFY progressChanged)
     Q_PROPERTY(bool isCancelable READ isCancelable NOTIFY cancelableChanged)
     Q_PROPERTY(bool isProgressing READ isProgressing NOTIFY progressingChanged)
+    Q_PROPERTY(bool needsReboot READ needsReboot NOTIFY needsRebootChanged)
+    Q_PROPERTY(quint64 downloadSpeed READ downloadSpeed NOTIFY downloadSpeedChanged)
     public:
         /**
          * Constructs an AbstractBackendUpdater
@@ -123,6 +125,15 @@ class DISCOVERCOMMON_EXPORT AbstractBackendUpdater : public QObject
          */
         virtual double updateSize() const = 0;
 
+        /**
+         * @returns the speed at which we are downloading
+         */
+        virtual quint64 downloadSpeed() const = 0;
+
+        void enableNeedsReboot();
+
+        bool needsReboot() const;
+
     public Q_SLOTS:
         /**
          * If \isCancelable is true during the transaction, this method has
@@ -179,7 +190,7 @@ class DISCOVERCOMMON_EXPORT AbstractBackendUpdater : public QObject
          * The AbstractBackendUpdater should emit this signal when the download speed changed.
          * @see downloadSpeed
          */
-        void downloadSpeedChanged(quint64);
+        void downloadSpeedChanged(quint64 downloadSpeed);
 
         /**
          * Provides the @p progress of a specific @p resource in a percentage.
@@ -196,6 +207,14 @@ class DISCOVERCOMMON_EXPORT AbstractBackendUpdater : public QObject
          * @sa proceed(), cancel()
          */
         void proceedRequest(const QString &title, const QString &description);
+
+        /**
+         * emitted when the updater decides it needs to reboot
+         */
+        void needsRebootChanged();
+
+    private:
+        bool m_needsReboot = false;
 };
 
 #endif // ABSTRACTBACKENDUPDATER_H

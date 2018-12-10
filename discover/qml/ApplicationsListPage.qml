@@ -18,14 +18,13 @@
  */
 
 import QtQuick 2.5
-import QtQuick.Controls 1.1
-import QtQuick.Controls 2.1 as QQC2
+import QtQuick.Controls 2.3
 import QtQuick.Layouts 1.1
 import QtQuick.Window 2.2
 import "navigation.js" as Navigation
 import org.kde.discover.app 1.0
 import org.kde.discover 2.0
-import org.kde.kirigami 2.0 as Kirigami
+import org.kde.kirigami 2.4 as Kirigami
 
 DiscoverPage {
     id: page
@@ -44,15 +43,24 @@ DiscoverPage {
     property alias count: apps.count
     property alias listHeader: apps.header
     property alias listHeaderPositioning: apps.headerPositioning
-    property bool compact: page.width < 500 || !applicationWindow().wideScreen
+    property bool compact: page.width < 550 || !applicationWindow().wideScreen
+    property bool showRating: true
 
     property bool canNavigate: true
     readonly property alias subcategories: appsModel.subcategories
-    title: category ? category.name : ""
 
-    onSearchChanged: {
-        appsModel.sortOrder = Qt.AscendingOrder
+    function escapeHtml(unsafe) {
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
     }
+
+    title: search.length>0 ? i18n("Search: %1", escapeHtml(search))
+         : category ? category.name : ""
+
     signal clearSearch()
 
     supportsRefreshing: true
@@ -60,15 +68,63 @@ DiscoverPage {
         appsModel.invalidateFilter()
         refreshing = false
     }
-    ListView {
+
+    ActionGroup {
+        id: sortGroup
+        exclusive: true
+    }
+
+    contextualActions: [
+        Kirigami.Action {
+            visible: !appsModel.sortByRelevancy
+            text: i18n("Sort: %1", sortGroup.checkedAction.text)
+            Action {
+                ActionGroup.group: sortGroup
+                text: i18n("Name")
+                onTriggered: {
+                    appsModel.sortRole = ResourcesProxyModel.NameRole
+                    appsModel.sortOrder = Qt.AscendingOrder
+                }
+                checkable: true
+                checked: appsModel.sortRole == ResourcesProxyModel.NameRole
+            }
+            Action {
+                ActionGroup.group: sortGroup
+                text: i18n("Rating")
+                onTriggered: {
+                    appsModel.sortRole = ResourcesProxyModel.SortableRatingRole
+                    appsModel.sortOrder = Qt.DescendingOrder
+                }
+                checkable: true
+                checked: appsModel.sortRole == ResourcesProxyModel.SortableRatingRole
+            }
+            Action {
+                ActionGroup.group: sortGroup
+                text: i18n("Size")
+                onTriggered: {
+                    appsModel.sortRole = ResourcesProxyModel.SizeRole
+                    appsModel.sortOrder = Qt.AscendingOrder
+                }
+                checkable: true
+                checked: appsModel.sortRole == ResourcesProxyModel.SizeRole
+            }
+            Action {
+                ActionGroup.group: sortGroup
+                text: i18n("Release Date")
+                onTriggered: {
+                    appsModel.sortRole = ResourcesProxyModel.ReleaseDateRole
+                    appsModel.sortOrder = Qt.DescendingOrder
+                }
+                checkable: true
+                checked: appsModel.sortRole == ResourcesProxyModel.ReleaseDateRole
+            }
+        }
+    ]
+
+    Kirigami.CardsListView {
         id: apps
 
-        anchors {
-            top: parent.top
-            topMargin: Kirigami.Units.gridUnit
-        }
-
-        section.delegate: QQC2.Label {
+        section.delegate: Label {
             text: section
             anchors {
                 right: parent.right
@@ -83,28 +139,24 @@ DiscoverPage {
                 apps.currentIndex = -1
             }
         }
-        spacing: Kirigami.Units.gridUnit
         currentIndex: -1
         delegate: ApplicationDelegate {
-            x: Kirigami.Units.gridUnit
-            width: ListView.view.width - Kirigami.Units.gridUnit*2
             application: model.application
             compact: page.compact
+            showRating: page.showRating
         }
 
-        QQC2.Label {
+        Label {
             anchors.centerIn: parent
             opacity: apps.count == 0 && !appsModel.isBusy ? 0.3 : 0
             Behavior on opacity { PropertyAnimation { duration: Kirigami.Units.longDuration; easing.type: Easing.InOutQuad; } }
             text: i18n("Sorry, nothing found...")
         }
 
-        BusyIndicator {
+        footer: BusyIndicator {
             id: busyIndicator
             anchors {
-                top: parent.bottom
                 horizontalCenter: parent.horizontalCenter
-                margins: Kirigami.Units.largeSpacing
             }
             running: false
             opacity: 0
@@ -113,7 +165,6 @@ DiscoverPage {
                     name: "running";
                     when: appsModel.isBusy
                     PropertyChanges { target: busyIndicator; opacity: 1; running: true; }
-                    AnchorChanges { target: busyIndicator; anchors.bottom: parent.bottom; anchors.top: undefined; }
                 }
             ]
             transitions: [
@@ -137,7 +188,7 @@ DiscoverPage {
                     }
                 }
             ]
-            QQC2.Label {
+            Label {
                 id: busyLabel
                 anchors {
                     horizontalCenter: parent.horizontalCenter

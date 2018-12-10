@@ -34,8 +34,8 @@
 #include <knewstuffcore_version.h>
 #include <KNSCore/Engine>
 #include <KNSCore/QuestionManager>
+#include <KConfig>
 #include <KConfigGroup>
-#include <KDesktopFile>
 #include <KLocalizedString>
 
 // DiscoverCommon includes
@@ -71,7 +71,10 @@ class KNSBackendFactory : public AbstractResourcesBackendFactory {
                     dirIt.next();
 
                     auto bk = new KNSBackend(parent, QStringLiteral("plasma"), dirIt.filePath());
-                    ret += bk;
+                    if (bk->isValid())
+                        ret += bk;
+                    else
+                        delete bk;
                 }
             }
             return ret;
@@ -109,23 +112,8 @@ KNSBackend::KNSBackend(QObject* parent, const QString& iconName, const QString &
 
     m_engine = new KNSCore::Engine(this);
     m_engine->init(m_name);
-#if KNEWSTUFFCORE_VERSION_MAJOR==5 && KNEWSTUFFCORE_VERSION_MINOR>=36
     m_engine->setPageSize(100);
-#endif
-    // Setting setFetching to false when we get an error ensures we don't end up in an eternally-fetching state
-    connect(m_engine, &KNSCore::Engine::signalError, this, [this](const QString &_error) {
-        QString error = _error;
-        if(error == QLatin1Literal("All categories are missing")) {
-            markInvalid(error);
-            error = i18n("Invalid %1 backend, contact your distributor.", m_displayName);
-        }
-        m_responsePending = false;
-        Q_EMIT searchFinished();
-        Q_EMIT availableForQueries();
-        this->setFetching(false);
-        qWarning() << "kns error" << objectName() << error;
-        passiveMessage(i18n("%1: %2", name(), error));
-    });
+    connect(m_engine, &KNSCore::Engine::signalErrorCode, this, &KNSBackend::signalErrorCode);
     connect(m_engine, &KNSCore::Engine::signalEntriesLoaded, this, &KNSBackend::receivedEntries, Qt::QueuedConnection);
     connect(m_engine, &KNSCore::Engine::signalEntryChanged, this, &KNSBackend::statusChanged, Qt::QueuedConnection);
     connect(m_engine, &KNSCore::Engine::signalEntryDetailsLoaded, this, &KNSBackend::statusChanged);
@@ -157,13 +145,17 @@ KNSBackend::KNSBackend(QObject* parent, const QString& iconName, const QString &
     m_rootCategories = { addonsCategory };
 }
 
-KNSBackend::~KNSBackend() = default;
+KNSBackend::~KNSBackend()
+{
+    qDeleteAll(m_rootCategories);
+}
 
 void KNSBackend::markInvalid(const QString &message)
 {
     qWarning() << "invalid kns backend!" << m_name << "because:" << message;
     m_isValid = false;
     setFetching(false);
+    Q_EMIT initialized();
 }
 
 void KNSBackend::fetchInstalled()
@@ -187,7 +179,12 @@ void KNSBackend::setFetching(bool f)
     if(m_fetching!=f) {
         m_fetching = f;
         emit fetchingChanged();
+
+        if (!m_fetching) {
+            Q_EMIT initialized();
+        }
     }
+
 }
 
 bool KNSBackend::isValid() const
@@ -214,29 +211,92 @@ void KNSBackend::receivedEntries(const KNSCore::EntryInternal::List& entries)
     const auto resources = kTransform<QVector<AbstractResource*>>(entries, [this](const KNSCore::EntryInternal& entry){ return resourceForEntry(entry); });
     if (!resources.isEmpty()) {
         Q_EMIT receivedResources(resources);
-    }
-
-    if(resources.isEmpty()) {
+    } else {
         Q_EMIT searchFinished();
         Q_EMIT availableForQueries();
         setFetching(false);
         return;
     }
 //     qDebug() << "received" << objectName() << this << m_resourcesByName.count();
-    if (!m_responsePending && !m_onePage) {
-        // We _have_ to set this first. If we do not, we may run into a situation where the
-        // data request will conclude immediately, causing m_responsePending to remain true
-        // for perpetuity as the slots will be called before the function returns.
-        m_responsePending = true;
-        m_engine->requestMoreData();
-    } else {
+    if (m_onePage) {
         Q_EMIT availableForQueries();
+        setFetching(false);
     }
+}
+
+void KNSBackend::fetchMore()
+{
+    if (m_responsePending)
+        return;
+
+    // We _have_ to set this first. If we do not, we may run into a situation where the
+    // data request will conclude immediately, causing m_responsePending to remain true
+    // for perpetuity as the slots will be called before the function returns.
+    m_responsePending = true;
+    m_engine->requestMoreData();
 }
 
 void KNSBackend::statusChanged(const KNSCore::EntryInternal& entry)
 {
     resourceForEntry(entry);
+}
+
+void KNSBackend::signalErrorCode(const KNSCore::ErrorCode& errorCode, const QString& message, const QVariant& metadata)
+{
+    QString error = message;
+    qDebug() << "KNS error in" << m_displayName << ":" << errorCode << message << metadata;
+    bool invalidFile = false;
+    switch(errorCode) {
+        case KNSCore::ErrorCode::UnknownError:
+            // This is not supposed to be hit, of course, but any error coming to this point should be non-critical and safely ignored.
+            break;
+        case KNSCore::ErrorCode::NetworkError:
+            // If we have a network error, we need to tell the user about it. This is almost always fatal, so mark invalid and tell the user.
+            error = i18n("Network error in backend %1: %2", m_displayName, metadata.toInt());
+            markInvalid(error);
+            invalidFile = true;
+            break;
+        case KNSCore::ErrorCode::OcsError:
+            if(metadata.toInt() == 200) {
+                // Too many requests, try again in a couple of minutes - perhaps we can simply postpone it automatically, and give a message?
+                error = i18n("Too many requests sent to the server for backend %1. Please try again in a few minutes.", m_displayName);
+            } else {
+                // Unknown API error, usually something critical, mark as invalid and cry a lot
+                error = i18n("Invalid %1 backend, contact your distributor.", m_displayName);
+                markInvalid(error);
+                invalidFile = true;
+            }
+            break;
+        case KNSCore::ErrorCode::ConfigFileError:
+            error = i18n("Invalid %1 backend, contact your distributor.", m_displayName);
+            markInvalid(error);
+            invalidFile = true;
+            break;
+        case KNSCore::ErrorCode::ProviderError:
+            error = i18n("Invalid %1 backend, contact your distributor.", m_displayName);
+            markInvalid(error);
+            invalidFile = true;
+            break;
+        case KNSCore::ErrorCode::InstallationError:
+            // This error is handled already, by forwarding the KNS engine's installer error message.
+            break;
+        case KNSCore::ErrorCode::ImageError:
+            // Image fetching errors are not critical as such, but may lead to weird layout issues, might want handling...
+            error = i18n("Could not fetch screenshot for the entry %1 in backend %2", metadata.toList().at(0).toString(), m_displayName);
+            break;
+        default:
+            // Having handled all current error values, we should by all rights never arrive here, but for good order and future safety...
+            error = i18n("Unhandled error in %1 backend. Contact your distributor.", m_displayName);
+            break;
+    }
+    m_responsePending = false;
+    Q_EMIT searchFinished();
+    Q_EMIT availableForQueries();
+    // Setting setFetching to false when we get an error ensures we don't end up in an eternally-fetching state
+    this->setFetching(false);
+    qWarning() << "kns error" << objectName() << error;
+    if (!invalidFile)
+        Q_EMIT passiveMessage(i18n("%1: %2", name(), error));
 }
 
 class KNSTransaction : public Transaction
@@ -251,6 +311,23 @@ public:
         auto manager = res->knsBackend()->engine();
         connect(manager, &KNSCore::Engine::signalEntryChanged, this, &KNSTransaction::anEntryChanged);
         TransactionModel::global()->addTransaction(this);
+
+        std::function<void()> actionFunction;
+        auto engine = res->knsBackend()->engine();
+        if(role == RemoveRole)
+            actionFunction = [res, engine]() {
+                engine->uninstall(res->entry());
+            };
+        else if (res->linkIds().isEmpty())
+            actionFunction = [res, engine]() {
+                engine->install(res->entry());
+            };
+        else
+            actionFunction = [res, engine]() {
+                for(auto i : res->linkIds())
+                    engine->install(res->entry(), i);
+            };
+        QTimer::singleShot(0, res, actionFunction);
     }
 
     void anEntryChanged(const KNSCore::EntryInternal& entry) {
@@ -284,15 +361,12 @@ private:
 Transaction* KNSBackend::removeApplication(AbstractResource* app)
 {
     auto res = qobject_cast<KNSResource*>(app);
-    auto t = new KNSTransaction(this, res, Transaction::RemoveRole);
-    m_engine->uninstall(res->entry());
-    return t;
+    return new KNSTransaction(this, res, Transaction::RemoveRole);
 }
 
 Transaction* KNSBackend::installApplication(AbstractResource* app)
 {
     auto res = qobject_cast<KNSResource*>(app);
-    m_engine->install(res->entry());
     return new KNSTransaction(this, res, Transaction::InstallRole);
 }
 
@@ -324,31 +398,49 @@ ResultsStream* KNSBackend::search(const AbstractResourcesBackend::Filters& filte
     if (filter.resourceUrl.scheme() == QLatin1String("kns")) {
         return findResourceByPackageName(filter.resourceUrl);
     } else if (filter.state >= AbstractResource::Installed) {
-        QVector<AbstractResource*> ret;
-        foreach(AbstractResource* r, m_resourcesByName) {
-            if(r->state()>=filter.state && (r->name().contains(filter.search, Qt::CaseInsensitive) || r->comment().contains(filter.search, Qt::CaseInsensitive)))
-                ret += r;
+        auto stream = new ResultsStream(QStringLiteral("KNS-installed"));
+
+        const auto start = [this, stream, filter]() {
+            if (m_isValid) {
+                auto filterFunction = [&filter](AbstractResource* r) { return r->state()>=filter.state && (r->name().contains(filter.search, Qt::CaseInsensitive) || r->comment().contains(filter.search, Qt::CaseInsensitive)); };
+                const auto ret = kFilter<QVector<AbstractResource*>>(m_resourcesByName, filterFunction);
+
+                if (!ret.isEmpty())
+                    Q_EMIT stream->resourcesFound(ret);
+            }
+            stream->finish();
+        };
+        if (isFetching()) {
+            connect(this, &KNSBackend::initialized, stream, start);
+        } else {
+            QTimer::singleShot(0, stream, start);
         }
-        return new ResultsStream(QStringLiteral("KNS-installed"), ret);
+
+        return stream;
     } else if (filter.category && filter.category->matchesCategoryName(m_categories.constFirst())) {
-        return searchStream(filter.search);
-    } else if (!filter.category && !filter.search.isEmpty()) {
-        return searchStream(filter.search);
+        auto r = new ResultsStream(QStringLiteral("KNS-search-")+name());
+        searchStream(r, filter.search);
+        return r;
     }
     return voidStream();
 }
 
-ResultsStream* KNSBackend::searchStream(const QString &searchText)
+void KNSBackend::searchStream(ResultsStream* stream, const QString &searchText)
 {
     Q_EMIT startingSearch();
 
-    auto stream = new ResultsStream(QStringLiteral("KNS-search-")+name());
     auto start = [this, stream, searchText]() {
+        Q_ASSERT(!isFetching());
+        if (!m_isValid) {
+            stream->finish();
+            return;
+        }
         // No need to explicitly launch a search, setting the search term already does that for us
         m_engine->setSearchTerm(searchText);
         m_onePage = false;
         m_responsePending = true;
 
+        connect(stream, &ResultsStream::fetchMore, this, &KNSBackend::fetchMore);
         connect(this, &KNSBackend::receivedResources, stream, &ResultsStream::resourcesFound);
         connect(this, &KNSBackend::searchFinished, stream, &ResultsStream::finish);
         connect(this, &KNSBackend::startingSearch, stream, &ResultsStream::finish);
@@ -356,10 +448,11 @@ ResultsStream* KNSBackend::searchStream(const QString &searchText)
 
     if (m_responsePending) {
         connect(this, &KNSBackend::availableForQueries, stream, start, Qt::QueuedConnection);
+    } else if (isFetching()) {
+        connect(this, &KNSBackend::initialized, stream, start);
     } else {
-        start();
+        QTimer::singleShot(0, stream, start);
     }
-    return stream;
 }
 
 ResultsStream * KNSBackend::findResourceByPackageName(const QUrl& search)
@@ -369,7 +462,7 @@ ResultsStream * KNSBackend::findResourceByPackageName(const QUrl& search)
 
     const auto pathParts = search.path().split(QLatin1Char('/'), QString::SkipEmptyParts);
     if (pathParts.size() != 2) {
-        passiveMessage(i18n("Wrong KNewStuff URI: %1", search.toString()));
+        Q_EMIT passiveMessage(i18n("Wrong KNewStuff URI: %1", search.toString()));
         return voidStream();
     }
     const auto providerid = pathParts.at(0);
@@ -383,8 +476,9 @@ ResultsStream * KNSBackend::findResourceByPackageName(const QUrl& search)
         connect(m_engine, &KNSCore::Engine::signalError, stream, &ResultsStream::finish);
         connect(m_engine, &KNSCore::Engine::signalEntryDetailsLoaded, stream, [this, stream, entryid, providerid](const KNSCore::EntryInternal &entry) {
             if (entry.uniqueId() == entryid && providerid == QUrl(entry.providerId()).host()) {
-                stream->resourcesFound({resourceForEntry(entry)});
-            }
+                Q_EMIT stream->resourcesFound({resourceForEntry(entry)});
+            } else
+                qWarning() << "found invalid" << entryid << entry.uniqueId() << providerid << QUrl(entry.providerId()).host();
             m_responsePending = false;
             QTimer::singleShot(0, this, &KNSBackend::availableForQueries);
             stream->finish();

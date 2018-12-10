@@ -20,8 +20,7 @@
 
 import QtQuick 2.1
 import QtQuick.Layouts 1.1
-import QtQuick.Controls 1.1
-import QtQuick.Controls 2.1 as QQC2
+import QtQuick.Controls 2.1
 import QtGraphicalEffects 1.0
 import org.kde.discover 2.0
 import org.kde.kirigami 2.0 as Kirigami
@@ -37,16 +36,24 @@ Flickable {
     contentHeight: height
     contentWidth: screenshotsLayout.width
 
-    QQC2.Popup {
+    Popup {
         id: overlay
         parent: applicationWindow().overlay
         modal: true
+        clip: false
 
         x: (parent.width - width)/2
         y: (parent.height - height)/2
         readonly property real proportion: overlayImage.sourceSize.width>1 ? overlayImage.sourceSize.height/overlayImage.sourceSize.width : 1
-        height: Math.min(parent.height * 0.9, (parent.width * 0.9) * proportion, overlayImage.sourceSize.height)
+        height: overlayImage.status == Image.Loading ? Kirigami.Units.gridUnit * 5 : Math.min(parent.height * 0.9, (parent.width * 0.9) * proportion, overlayImage.sourceSize.height)
         width: height/proportion
+
+        BusyIndicator {
+            id: indicator
+            visible: running
+            running: overlayImage.status == Image.Loading
+            anchors.fill: parent
+        }
 
         Image {
             id: overlayImage
@@ -62,7 +69,7 @@ Flickable {
                 verticalCenter: parent.verticalCenter
             }
             visible: leftAction.visible
-            iconName: leftAction.iconName
+            icon.name: leftAction.iconName
             onClicked: leftAction.triggered(null)
         }
 
@@ -72,23 +79,23 @@ Flickable {
                 verticalCenter: parent.verticalCenter
             }
             visible: rightAction.visible
-            iconName: rightAction.iconName
+            icon.name: rightAction.iconName
             onClicked: rightAction.triggered(null)
         }
 
         Kirigami.Action {
             id: leftAction
-            iconName: "arrow-left"
+            icon.name: "arrow-left"
             enabled: overlay.visible && visible
-            visible: root.currentIndex >= 1
+            visible: root.currentIndex >= 1 && !indicator.running
             onTriggered: root.currentIndex = (root.currentIndex - 1) % screenshotsModel.count
         }
 
         Kirigami.Action {
             id: rightAction
-            iconName: "arrow-right"
+            icon.name: "arrow-right"
             enabled: overlay.visible && visible
-            visible: root.currentIndex < (root.count - 1)
+            visible: root.currentIndex < (root.count - 1) && !indicator.running
             onTriggered: root.currentIndex = (root.currentIndex + 1) % screenshotsModel.count
         }
     }
@@ -125,7 +132,7 @@ Flickable {
                 DropShadow {
                     source: thumbnail
                     anchors.fill: thumbnail
-                    verticalOffset: 3
+                    verticalOffset: Kirigami.Units.largeSpacing
                     horizontalOffset: 0
                     radius: 12.0
                     samples: 25

@@ -27,10 +27,6 @@
 #include "discovercommon_export.h"
 #include "AbstractSourcesBackend.h"
 
-class QAction;
-class AbstractResourcesBackend;
-class SourceBackendModel;
-
 class DISCOVERCOMMON_EXPORT SourcesModel : public KConcatenateRowsProxyModel
 {
     Q_OBJECT
@@ -38,7 +34,8 @@ class DISCOVERCOMMON_EXPORT SourcesModel : public KConcatenateRowsProxyModel
         enum Roles {
             SourceNameRole = AbstractSourcesBackend::LastRole,
             SourcesBackend,
-            ResourcesBackend
+            ResourcesBackend,
+            EnabledRole
         };
         Q_ENUM(Roles)
 
@@ -49,9 +46,10 @@ class DISCOVERCOMMON_EXPORT SourcesModel : public KConcatenateRowsProxyModel
         QVariant data(const QModelIndex & index, int role) const override;
         QHash<int, QByteArray> roleNames() const override;
 
-        SourceBackendModel* addBackend(AbstractResourcesBackend* backend);
         void addSourcesBackend(AbstractSourcesBackend* sources);
-        
+
+        Q_SCRIPTABLE AbstractSourcesBackend* sourcesBackendByName(const QString &name) const;
+
     private:
         const QAbstractItemModel* modelAt(const QModelIndex& idx) const;
 };

@@ -1,6 +1,6 @@
 /***************************************************************************
- *   Copyright © 2017 Aleix Pol Gonzalez <aleixpol@blue-systems.com>       *
- *   Copyright © 2017 Jan Grulich <jgrulich@redhat.com>                    *
+ *   Copyright © 2013 Aleix Pol Gonzalez <aleixpol@blue-systems.com>       *
+ *   Copyright © 2018 Abhijeet Sharma <sharma.abhijeet2096@gmail.com>      *
  *                                                                         *
  *   This program is free software; you can redistribute it and/or         *
  *   modify it under the terms of the GNU General Public License as        *
@@ -19,26 +19,34 @@
  *   along with this program.  If not, see <http://www.gnu.org/licenses/>. *
  ***************************************************************************/
 
-#ifndef CACHEDNETWORKACCESSMANAGER_H
-#define CACHEDNETWORKACCESSMANAGER_H
+#ifndef FWUPDTRANSACTION_H
+#define FWUPDTRANSACTION_H
 
-#include "discovercommon_export.h"
+#include <Transaction/Transaction.h>
+#include "FwupdBackend.h"
+#include "FwupdResource.h"
 
-#include <QNetworkAccessManager>
-#include <QQmlNetworkAccessManagerFactory>
 
-class DISCOVERCOMMON_EXPORT CachedNetworkAccessManager : public QNetworkAccessManager
+class FwupdResource;
+class FwupdTransaction : public Transaction
 {
-public:
-    explicit CachedNetworkAccessManager(const QString &path, QObject *parent = nullptr);
+    Q_OBJECT
+    public:
+        FwupdTransaction(FwupdResource* app, FwupdBackend* backend);
+        ~FwupdTransaction();
+        void cancel() override;
+        void proceed() override;
 
-    virtual QNetworkReply * createRequest(Operation op, const QNetworkRequest &request, QIODevice *outgoingData = nullptr) override;
+    private Q_SLOTS:
+        void updateProgress();
+        void finishTransaction();
+        void fwupdInstall();
+
+    private:
+        void install();
+
+        FwupdResource* const m_app;
+        FwupdBackend* const m_backend;
 };
 
-class DISCOVERCOMMON_EXPORT CachedNetworkAccessManagerFactory : public QQmlNetworkAccessManagerFactory
-{
-    virtual QNetworkAccessManager * create(QObject *parent) override;
-};
-
-#endif // CACHEDNETWORKACCESSMANAGER_H
-
+#endif // FWUPDTRANSACTION_H
